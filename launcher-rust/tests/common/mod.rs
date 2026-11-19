@@ -33,6 +33,11 @@ pub fn state_with(dir: &Path, host: Arc<dyn ReleaseHost>) -> State {
         _ => None,
     };
     let mut state = State::with_host(Paths::from_env(dir, &env), host);
+    // English assertions must not depend on the test machine's Windows display language.
+    if state.store.text("ui_language").is_empty() {
+        state.lang = "en".into();
+        state.rtl = false;
+    }
     state.splash.done = true;
     // No test reaches the machine's own SDL3 or pads: they get a scripted one.
     state.joystick_opener = |_| Err(JoyError::Missing);
