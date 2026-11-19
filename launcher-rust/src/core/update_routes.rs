@@ -29,12 +29,15 @@ fn probe(url: &str) -> Option<f64> {
         .call()
         .ok()?;
     let mut sample = Vec::with_capacity(SAMPLE);
-    response
+    let read = response
         .into_body()
         .into_reader()
         .take(SAMPLE as u64)
-        .read_to_end(&mut sample)
-        .ok()?;
+        .read_to_end(&mut sample);
+    // Slow connections can still provide a useful sample before the time limit.
+    if read.is_err_and(|error| error.kind() != std::io::ErrorKind::TimedOut) {
+        return None;
+    }
     if !sample.starts_with(b"PK\x03\x04") || sample.len() < 1024 {
         return None;
     }
@@ -193,7 +196,8 @@ mod tests {
     fn published_launcher_downloads_and_validates() {
         let list = super::super::list_releases(true).unwrap();
         let release = list.first().expect("published Windows launcher");
-        let digest = release.sha256.as_deref().expect("GitHub asset digest");
+        println!("Checking {}", release.url);
+        let digest = release.sha256.as_deref().expect("published SHA-256");
         let urls = candidates(&release.url);
         assert_eq!(urls.len(), 3);
         let temp = tempfile::tempdir().unwrap();

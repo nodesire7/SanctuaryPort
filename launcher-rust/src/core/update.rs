@@ -70,8 +70,40 @@ fn get(
 pub fn list_releases(windows: bool) -> Result<Vec<release::Release>, UpdateError> {
     // SANCTUARY_RELEASES_API: another list (a test server), to try an update before publishing it.
     let api = std::env::var("SANCTUARY_RELEASES_API").unwrap_or_else(|_| RELEASES_API.to_string());
+    match list_from_api(&api, windows) {
+        Ok(releases) => Ok(releases),
+        Err(api_error) if windows && api == RELEASES_API => latest_windows_release()
+            .map(|latest| vec![latest])
+            .map_err(|web_error| UpdateError::Http(format!("{api_error} / {web_error}"))),
+        Err(error) => Err(error),
+    }
+}
+
+/// GitHub's public web redirect and checksum sidecar also work when the anonymous API is limited.
+fn latest_windows_release() -> Result<release::Release, UpdateError> {
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .max_redirects(0)
+        .timeout_global(Some(Duration::from_secs(12)))
+        .build().into();
+    let response = agent.head(RELEASES_PAGE).header("User-Agent", USER_AGENT)
+        .call().map_err(http_error)?;
+    let page = response.headers().get("Location")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| UpdateError::Http("GitHub did not return a latest release".into()))?;
+    let tag = page.strip_prefix("https://github.com/nodesire7/SanctuaryPort/releases/tag/")
+        .filter(|tag| tag.starts_with("zh-CN-v") &&
+            tag.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-'))
+        .ok_or_else(|| UpdateError::Http("Unexpected localization release tag".into()))?;
+    let id = ReleaseId::parse(tag, false)
+        .ok_or_else(|| UpdateError::Http("Invalid localization version".into()))?;
+    let url = format!("https://github.com/nodesire7/SanctuaryPort/releases/download/{tag}/SanctuaryPort-launcher-zh-CN.zip");
+    let sha256 = Some(release_checksum(&url)?);
+    Ok(release::Release { id, published: String::new(), url, sha256, page: page.to_owned() })
+}
+
+fn list_from_api(api: &str, windows: bool) -> Result<Vec<release::Release>, UpdateError> {
     let (mut reader, _) = get(
-        &api,
+        api,
         Some("application/vnd.github+json"),
         Some(Duration::from_secs(15)),
     )?;

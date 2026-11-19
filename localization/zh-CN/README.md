@@ -4,7 +4,7 @@
 
 适用于已有的 SanctuaryPort Windows 游戏目录。首次安装时，把汉化发布包中的 `SanctuaryPort.exe` 解压到现有启动器所在目录。以后可在首页右上角的版本菜单或「高级 → 检查更新」安装新版。启动时检查更新由「高级」中的开关控制。
 
-更新器通过 GitHub API 获取本分支的发布记录，从同一个 ZIP 并行试读最多 256 KiB，对 GitHub 直连、GHFast、GH-Proxy 按实际吞吐量排序。完整下载失败或 SHA-256 与 GitHub 的记录不符时，自动尝试下一条线路。线路速度随网络变化，每次下载重新测量。版本查询需要能访问 GitHub API。
+更新器通过 GitHub API 获取本分支的发布记录，从同一个 ZIP 并行试读最多 256 KiB，对 GitHub 直连、GHFast、GH-Proxy 按实际吞吐量排序。完整下载失败或 SHA-256 与 GitHub 的记录不符时，自动尝试下一条线路。线路速度随网络变化，每次下载重新测量。若 GitHub API 限流或无法访问，启动器会改用 GitHub 官方发布页查询最新汉化版本，并从同一版本的校验文件读取 SHA-256。
 
 Windows 汉化更新只安装启动器。游戏内菜单使用原有汉化运行库，剧情和语音使用当前游戏目录中的语言包。单独安装此 ZIP 需要已有运行环境。
 
@@ -20,7 +20,9 @@ python -X utf8 localization/zh-CN/sync.py
 
 ```powershell
 python -X utf8 launcher-rust/tools/i18n_audit.py zh
-cargo test --manifest-path launcher-rust/Cargo.toml --locked --release --lib core::update
+Push-Location launcher-rust
+cargo test --locked --release --lib core::update
+Pop-Location
 python localization/zh-CN/package.py --revision 1 --out dist
 ```
 
