@@ -595,6 +595,9 @@ pub fn game_languages(state: &State, chosen: &str, lang: &str) -> (Vec<(String, 
     let pairs: Vec<(String, String)> = choice_pairs(LANGUAGES, lang)
         .into_iter()
         .filter(|(code, _)| available.is_empty() || available.contains(&code.as_str()))
+        .map(|(code, label)| if lang == "zh" && code == "1" {
+            (code, "中文汉化（enUS）".into())
+        } else { (code, label) })
         .collect();
     let shown = if available.is_empty() || available.contains(&chosen) {
         chosen.to_string()

@@ -715,7 +715,16 @@ fn bottom_block(state: &State, enabled: bool) -> Element<'_, Message> {
     let status = text(status_line(state))
         .size(HINT_SIZE)
         .color(faded(palette::MUTED, opacity));
-    let lines = column![chips, quick, status]
+    let credits = row![
+        text(tr(&state.lang, "Chinese localization by A-FEI-")).size(14),
+        button(text("bbs.gbtgame.me").size(14))
+            .style(button_flat)
+            .padding([1, 5])
+            .on_press_maybe(enabled.then(|| Message::Update(
+                crate::ui::update::UpdateMessage::OpenPage("https://bbs.gbtgame.me".into())
+            ))),
+    ].spacing(6).align_y(Center);
+    let lines = column![chips, quick, status, credits]
         .spacing(QUICK_GAP)
         .align_x(mirror_x(Right, state.rtl));
     let content = column![
@@ -746,8 +755,6 @@ fn bottom_block(state: &State, enabled: bool) -> Element<'_, Message> {
 pub fn top_right(state: &State, version: bool) -> Element<'_, Message> {
     // The language button keeps the corner; mirrored, the version button reads on its right.
     let language = lang_menu::button_view(state);
-    // SanctuaryPort has no release channel: the version menu (SpartanPort's updates) is hidden.
-    let version = version && false;
     let buttons = if !version {
         row![language]
     } else if state.rtl {

@@ -1138,7 +1138,7 @@ pub fn run(paths: Paths) -> iced::Result {
         (state, Task::batch([checks, monitors]))
     };
     let app = iced::application(boot, update, view)
-        .title("SanctuaryPort (PC)")
+        .title("暗黑破坏神3：夺魂之镰 – 终极邪恶版 · SanctuaryPort")
         .theme(|_: &State| theme::theme())
         .subscription(subscription)
         .scale_factor(|state: &State| window_zoom(state.scale, state.desktop_scale))

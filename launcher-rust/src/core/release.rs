@@ -85,7 +85,7 @@ impl ReleaseId {
     pub fn from_tag(tag: Option<&str>) -> ReleaseId {
         match tag.and_then(|t| ReleaseId::parse(t, false)) {
             Some(mut id) => {
-                if id.build.is_some() {
+                if id.build.is_some() && !tag.is_some_and(|s| s.starts_with("zh-CN-v")) {
                     id.channel = Channel::PreRelease;
                 }
                 id
@@ -136,17 +136,19 @@ pub struct Release {
     pub id: ReleaseId,
     pub published: String,
     pub url: String,
+    pub sha256: Option<String>,
     pub page: String,
 }
 
 /// The first asset of `assets` whose name satisfies `wanted`: its download URL.
-fn asset_url(assets: &[Value], wanted: impl Fn(&str) -> bool) -> Option<String> {
+fn package_asset(assets: &[Value], wanted: impl Fn(&str) -> bool) -> Option<&Value> {
     assets.iter().find_map(|asset| {
         let name = asset.get("name")?.as_str()?;
         if !wanted(name) {
             return None;
         }
-        Some(asset.get("browser_download_url")?.as_str()?.to_string())
+        asset.get("browser_download_url")?.as_str()?;
+        Some(asset)
     })
 }
 
@@ -165,7 +167,10 @@ fn parse_entry(entry: &Value, windows: bool) -> Option<Release> {
     let published = entry.get("published_at")?.as_str()?.to_string();
     let assets = entry.get("assets")?.as_array()?;
     let suffix = if windows { ".zip" } else { ".appimage" };
-    let url = asset_url(assets, |name| name.to_lowercase().ends_with(suffix))?;
+    let asset = package_asset(assets, |name| name.to_lowercase().ends_with(suffix))?;
+    let url = asset.get("browser_download_url")?.as_str()?.to_owned();
+    let sha256 = asset.get("digest").and_then(Value::as_str)
+        .and_then(|digest| digest.strip_prefix("sha256:")).map(str::to_owned);
     let page = entry
         .get("html_url")
         .and_then(Value::as_str)
@@ -175,6 +180,7 @@ fn parse_entry(entry: &Value, windows: bool) -> Option<Release> {
         id,
         published,
         url,
+        sha256,
         page,
     })
 }
@@ -269,6 +275,7 @@ mod tests {
 
     fn rel(tag: &str, prerelease: bool, published: &str) -> Release {
         Release {
+            sha256: None,
             id: ReleaseId::parse(tag, prerelease).unwrap(),
             published: published.into(),
             url: String::new(),

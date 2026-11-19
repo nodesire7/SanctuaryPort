@@ -313,6 +313,7 @@ fn rebuilding_keeps_the_status_of_a_running_game() {
     let mut state = state_in(dir.path());
     state.log.push_text("The game is running.\n");
     let listed = vec![Release {
+        sha256: None,
         id: ReleaseId {
             channel: Channel::Release,
             version: "99.0.0".to_string(),

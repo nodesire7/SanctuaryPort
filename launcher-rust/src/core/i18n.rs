@@ -1053,6 +1053,15 @@ pub fn tr(lang: &str, en: &str) -> String {
     if let Some(base) = en.strip_suffix(WARN) {
         return tr(lang, base) + WARN;
     }
+    if lang == "zh" {
+        static ZH: OnceLock<HashMap<String, String>> = OnceLock::new();
+        let entries = ZH.get_or_init(|| serde_json::from_str(include_str!(
+            "../../../localization/zh-CN/launcher.json"
+        )).expect("valid zh-CN launcher dictionary"));
+        if let Some(text) = entries.get(en) {
+            return text.clone();
+        }
+    }
     lookup(lang, en)
         .filter(|text| !text.is_empty())
         .or_else(|| ui_extra(lang, en).map(str::to_string))
@@ -1101,6 +1110,15 @@ pub fn tr_fmt(lang: &str, en: &str, args: &[&str]) -> String {
 
 /// Text of the Trophies page in `lang`; English when there is none.
 pub fn trophy_ui(lang: &str, en: &str) -> String {
+    if lang == "zh" {
+        static ZH: OnceLock<HashMap<String, String>> = OnceLock::new();
+        let entries = ZH.get_or_init(|| serde_json::from_str(include_str!(
+            "../../../localization/zh-CN/trophy-ui.json"
+        )).expect("valid zh-CN trophy dictionary"));
+        if let Some(text) = entries.get(en) {
+            return text.clone();
+        }
+    }
     table()
         .trophies
         .ui

@@ -58,6 +58,8 @@ def tables():
     options = (ROOT / 'src/core/options.rs').read_text()
     ru_labels = {unescape(m.group(2)): unescape(m.group(3)) for m in
                  re.finditer(r'\bcr\(\s*' + STR + r'\s*,\s*' + STR + r'\s*,\s*' + STR, options)}
+    zh = json.loads((ROOT.parent / 'localization/zh-CN/launcher.json').read_text(encoding='utf-8'))
+    table['extra'].setdefault('zh', {}).update(zh)
     return table, index, ui_extra, ru_labels
 
 

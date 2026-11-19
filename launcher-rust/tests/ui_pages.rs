@@ -2245,6 +2245,7 @@ mod update_flow {
 
     fn release(version: &str, build: Option<&str>, prerelease: bool) -> Release {
         Release {
+            sha256: None,
             id: ReleaseId {
                 channel: if prerelease {
                     Channel::PreRelease

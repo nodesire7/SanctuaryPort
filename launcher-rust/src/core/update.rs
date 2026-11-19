@@ -16,8 +16,11 @@ pub use crate::core::release::version_tuple;
 use crate::core::release::{self, ReleaseId};
 
 pub const RELEASES_API: &str =
-    "https://api.github.com/repos/CaduGimenes/SanctuaryPort/releases?per_page=100";
-pub const RELEASES_PAGE: &str = "https://github.com/CaduGimenes/SanctuaryPort/releases/latest";
+    "https://api.github.com/repos/nodesire7/SanctuaryPort/releases?per_page=100";
+pub const RELEASES_PAGE: &str = "https://github.com/nodesire7/SanctuaryPort/releases/latest";
+#[path = "update_routes.rs"]
+mod routes;
+
 const USER_AGENT: &str = "sanctuaryport-launcher";
 const CHUNK: usize = 1 << 20;
 
@@ -48,8 +51,9 @@ fn get(
     config = match global {
         Some(limit) => config.timeout_global(Some(limit)),
         None => config
-            .timeout_connect(Some(Duration::from_secs(60)))
-            .timeout_recv_response(Some(Duration::from_secs(60))),
+            .timeout_per_read(Some(Duration::from_secs(15)))
+            .timeout_connect(Some(Duration::from_secs(15)))
+            .timeout_recv_response(Some(Duration::from_secs(20))),
     };
     let agent: ureq::Agent = config.build().into();
     let mut request = agent.get(url).header("User-Agent", USER_AGENT);
@@ -74,7 +78,13 @@ pub fn list_releases(windows: bool) -> Result<Vec<release::Release>, UpdateError
     let mut text = String::new();
     reader.read_to_string(&mut text)?;
     let json = serde_json::from_str(&text).map_err(|e| UpdateError::Json(e.to_string()))?;
-    release::parse_releases(&json, windows)
+    let mut releases = release::parse_releases(&json, windows)?;
+    if windows && api == RELEASES_API {
+        releases.retain(|release| release.url.starts_with(
+            "https://github.com/nodesire7/SanctuaryPort/releases/download/zh-CN-v"
+        ) && release.url.ends_with("/SanctuaryPort-launcher-zh-CN.zip"));
+    }
+    Ok(releases)
 }
 
 /// The SHA-256 in a `<package>.sha256` file (`sha256sum` format).
@@ -326,6 +336,38 @@ pub fn install_over(
     }
 }
 
+/// Localized releases own only the launcher. A locked file can be retried without
+/// truncating the installed executable or touching localized game and runtime data.
+pub fn install_launcher(
+    source: &Path, target: &Path, attempts: u32, pause: &mut dyn FnMut(),
+) -> io::Result<()> {
+    let mut pending = tempfile::NamedTempFile::new_in(target)?;
+    io::copy(&mut fs::File::open(source.join(PACKAGED_EXE))?, pending.as_file_mut())?;
+    pending.as_file().sync_all()?;
+    let destination = target.join(PACKAGED_EXE);
+    for _ in 1..attempts {
+        match pending.persist(&destination) {
+            Ok(_) => return Ok(()),
+            Err(error) => pending = error.file,
+        }
+        pause();
+    }
+    pending.persist(destination).map(drop).map_err(|error| error.error)
+}
+
+/// Another installation may be updating at the same time. Only retire old private staging folders.
+pub fn clean_old_updates() {
+    let Ok(entries) = fs::read_dir(update_dir()) else { return };
+    for entry in entries.flatten() {
+        if entry.file_name().to_string_lossy().starts_with("zh-CN-")
+            && entry.file_type().is_ok_and(|kind| kind.is_dir())
+            && entry.metadata().and_then(|m| m.modified()).ok()
+                .and_then(|t| t.elapsed().ok()).is_some_and(|age| age > Duration::from_secs(86400)) {
+            let _ = fs::remove_dir_all(entry.path());
+        }
+    }
+}
+
 /// The file name of the packaged Windows launcher (ruling R47: a source tree is not packaged).
 const PACKAGED_EXE: &str = "SanctuaryPort.exe";
 
@@ -432,7 +474,7 @@ impl ReleaseHost for GitHubReleases {
         progress: &mut dyn FnMut(u8),
     ) -> Result<(), String> {
         if self.windows {
-            install_windows(&release.url, &self.port_dir, progress)
+            install_windows(release, &self.port_dir, progress)
         } else {
             install_appimage(&release.url, self.appimage.as_deref(), progress)
         }
@@ -458,16 +500,21 @@ fn install_appimage(
 /// this installation once this one has closed. The published `.sha256` is checked when the
 /// release has one (the Python launcher never checked it, spec 5.6 does). Unpacking uses the
 /// `zip` crate's `extract`, which refuses names that leave the folder.
-fn install_windows(url: &str, port_dir: &Path, report: &mut dyn FnMut(u8)) -> Result<(), String> {
+fn install_windows(release: &release::Release, port_dir: &Path, report: &mut dyn FnMut(u8)) -> Result<(), String> {
     fn text(error: impl std::fmt::Display) -> String {
         error.to_string()
     }
-    let dir = update_dir();
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).map_err(text)?;
+    fs::create_dir_all(update_dir()).map_err(text)?;
+    let staging = tempfile::Builder::new().prefix("zh-CN-")
+        .tempdir_in(update_dir()).map_err(text)?;
+    let dir = staging.path();
     let archive = dir.join("update.zip");
-    let expected = release_checksum(url).ok();
-    download(url, &archive, expected.as_deref(), report).map_err(text)?;
+    let expected = match &release.sha256 {
+        Some(hash) => parse_checksum(hash),
+        None => release_checksum(&release.url),
+    }.map_err(text)?;
+    routes::download_zip(&routes::candidates(&release.url), &archive, &expected, report)
+        .map_err(text)?;
     let new = dir.join("new");
     let file = fs::File::open(&archive).map_err(text)?;
     zip::ZipArchive::new(file)
@@ -484,7 +531,10 @@ fn install_windows(url: &str, port_dir: &Path, report: &mut dyn FnMut(u8)) -> Re
         .current_dir(&folder)
         .stdin(Stdio::null());
     crate::core::platform::prepare(&mut command);
-    command.spawn().map(drop).map_err(text)
+    command.spawn().map_err(text)?;
+    // The helper is running from this folder. A later installed launch cleans it up.
+    let _ = staging.keep();
+    Ok(())
 }
 
 /// The folder under `root` that holds the launcher (Python `rglob`).

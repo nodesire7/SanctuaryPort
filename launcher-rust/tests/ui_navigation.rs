@@ -169,6 +169,7 @@ fn keys_do_nothing_under_a_dialog() {
     let mut state = state_in(dir.path());
     state.modal = dialog(ModalKind::YesNo {
         yes: Message::Update(UpdateMessage::Confirmed(Release {
+            sha256: None,
             id: ReleaseId {
                 channel: Channel::Release,
                 version: "9.9.9".into(),

@@ -235,6 +235,11 @@ pub fn update(state: &mut State, message: UpdateMessage) -> Task<Message> {
             match result {
                 Ok(releases) => {
                     ready(state, releases);
+                    if manual {
+                        if let Some(release) = state.updater.newer().cloned() {
+                            return update(state, UpdateMessage::Install(release));
+                        }
+                    }
                     if offer_decision(state.updater.newer().is_some(), manual) == Decision::Latest {
                         let text = tr_fmt(
                             &lang,
@@ -355,8 +360,7 @@ pub fn drain(state: &mut State) {
 /// itself and the setting asks for it; `Check::Update` carries the answer.
 pub fn start_up_check(state: &State) -> Task<Message> {
     let done = |releases| Message::Splash(SplashMessage::CheckDone(Check::Update(releases)));
-    // SanctuaryPort has no release feed yet: never ask GitHub.
-    if false && state.updater.self_update() && state.store.flag("check_updates") {
+    if state.updater.self_update() && state.store.flag("check_updates") {
         let host = state.updater.host.clone();
         blocking(move || host.list().ok()).map(done)
     } else {

@@ -1,3 +1,5 @@
+**简体中文启动器 · A-FEI-**　[下载汉化更新](https://github.com/nodesire7/SanctuaryPort/releases/latest) · [安装与同步说明](localization/zh-CN/README.md) · [GBTGAME 论坛](https://bbs.gbtgame.me)
+
 <p align="center">
   <img src="launcher-rust/assets/sanctuaryport-logo.png" alt="SanctuaryPort" width="560">
 </p>

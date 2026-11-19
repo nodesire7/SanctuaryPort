@@ -93,7 +93,7 @@ pub fn apply_game_options<S: AsRef<OsStr>>(settings: &mut Settings, args: &[S]) 
 pub fn install_update(source: &Path, target: &Path, pid: u32, lang: &str) -> i32 {
     platform::wait_for_process(pid, Duration::from_secs(60));
     let mut pause = || std::thread::sleep(Duration::from_secs(1));
-    if update::install_over(source, target, 30, &mut pause).is_err() {
+    if update::install_launcher(source, target, 30, &mut pause).is_err() {
         platform::show_error(
             APP_NAME,
             &tr(
@@ -273,7 +273,7 @@ pub fn prepare(paths: &Paths) {
     }
     if installed {
         // In use or already gone: tried again at the next start.
-        let _ = std::fs::remove_dir_all(update_dir());
+        update::clean_old_updates();
     }
 }
 

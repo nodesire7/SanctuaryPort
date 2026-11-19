@@ -546,12 +546,26 @@ fn play_is_disabled_behind_the_wide_drawer() {
         .any(|message| matches!(message, Message::Play)));
 }
 
+#[test]
+fn chinese_home_shows_localizer_and_clickable_forum() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut state = state_in(dir.path());
+    state.lang = "zh".into();
+    let mut ui = simulator(app::view(&state));
+    assert!(ui.find("汉化作者 A-FEI-").is_ok());
+    ui.click("bbs.gbtgame.me").unwrap();
+    assert!(ui.into_messages().any(|m| matches!(m,
+        Message::Update(UpdateMessage::OpenPage(url)) if url == "https://bbs.gbtgame.me"
+    )));
+}
+
 fn version(state: &mut State, message: VersionMessage) -> Task<Message> {
     app::update(state, Message::VersionMenu(message))
 }
 
 fn release(channel: Channel, version: &str, build: Option<&str>) -> Release {
     Release {
+        sha256: None,
         id: ReleaseId {
             channel,
             version: version.to_string(),

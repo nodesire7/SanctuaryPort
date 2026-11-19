@@ -820,6 +820,7 @@ fn a_confirmed_update_waits_for_the_game() {
         &["--lines", "1000", "--delay-ms", "50", "--exit", "0"],
     );
     let release = Release {
+        sha256: None,
         id: ReleaseId {
             channel: Channel::Release,
             version: "9.9.9".into(),
@@ -1015,6 +1016,7 @@ fn install_while_the_game_runs_says_close_it() {
     send(&mut state, Message::Play);
     assert!(state.game.is_live());
     let newer = Release {
+        sha256: None,
         id: ReleaseId {
             channel: Channel::Release,
             version: "9.9.9".into(),

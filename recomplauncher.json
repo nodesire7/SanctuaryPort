@@ -2,14 +2,14 @@
   "$schema": "https://recomplauncher.com/schema/recomplauncher.json",
   "format": 1,
   "name": "SanctuaryPort",
-  "repo": "CaduGimenes/SanctuaryPort",
+  "repo": "nodesire7/SanctuaryPort",
   "game": {
     "kind": "folder",
-    "label": "Your Diablo III dump from a PS4 you own: the folder with eboot.bin (CUSA00243, CUSA00242, CUSA00433 or CUSA00434).",
+    "label": "您提供的《暗黑破坏神III》游戏目录，目录内含 eboot.bin。",
     "check": { "file": "eboot.bin" },
     "update": {
       "into": "update",
-      "label": "Your 1.47 update dump (CUSA00243-UPDATE), if your game has one.",
+      "label": "游戏的 1.47 更新目录。",
       "accepts": "folder",
       "optional": true
     }
@@ -42,21 +42,21 @@
   "settings": [
     {
       "id": "display_mode",
-      "label": "Window mode",
+      "label": "显示模式",
       "choices": [
-        { "label": "Windowed", "set": { "display_mode": "windowed" } },
-        { "label": "Borderless", "set": { "display_mode": "borderless" } },
-        { "label": "Fullscreen", "set": { "display_mode": "fullscreen" } }
+        { "label": "窗口", "set": { "display_mode": "windowed" } },
+        { "label": "无边框", "set": { "display_mode": "borderless" } },
+        { "label": "全屏", "set": { "display_mode": "fullscreen" } }
       ],
       "defaults": { "display_mode": "windowed" }
     },
     {
       "id": "render_resolution",
-      "label": "Render resolution",
-      "help": "What the game draws at. Native is the PS4's own 1080p.",
+      "label": "渲染分辨率",
+      "help": "游戏内部渲染分辨率。原生设置为 PS4 的 1080p。",
       "choices": [
         { "label": "720p", "set": { "render_resolution": "720p" } },
-        { "label": "Native (1080p)", "set": { "render_resolution": "native" } },
+        { "label": "原生（1080p）", "set": { "render_resolution": "native" } },
         { "label": "1440p", "set": { "render_resolution": "1440p" } },
         { "label": "4K", "set": { "render_resolution": "4K" } }
       ],
@@ -64,10 +64,10 @@
     },
     {
       "id": "upscaler",
-      "label": "Upscaling",
-      "help": "FSR 3.1 works on any GPU. TAA smooths edges at the render resolution.",
+      "label": "画面放大",
+      "help": "画面放大与抗锯齿选项，实际可用效果取决于游戏配置。",
       "choices": [
-        { "label": "Off", "set": { "upscaler": "off" } },
+        { "label": "关闭", "set": { "upscaler": "off" } },
         { "label": "FSR 3.1", "set": { "upscaler": "fsr3" } },
         { "label": "TAA", "set": { "upscaler": "taa" } }
       ],
@@ -75,9 +75,9 @@
     },
     {
       "id": "anti_aliasing",
-      "label": "Anti-aliasing",
+      "label": "抗锯齿",
       "choices": [
-        { "label": "Off", "set": { "anti_aliasing": "off" } },
+        { "label": "关闭", "set": { "anti_aliasing": "off" } },
         { "label": "FXAA", "set": { "anti_aliasing": "fxaa" } },
         { "label": "SMAA", "set": { "anti_aliasing": "smaa" } }
       ],
@@ -85,22 +85,22 @@
     },
     {
       "id": "vsync",
-      "label": "V-Sync",
+      "label": "垂直同步",
       "choices": [
-        { "label": "On", "set": { "vsync": "1" } },
-        { "label": "Off", "set": { "vsync": "0" } }
+        { "label": "开启", "set": { "vsync": "1" } },
+        { "label": "关闭", "set": { "vsync": "0" } }
       ],
       "defaults": { "vsync": "1" }
     },
     {
       "id": "fps_limit",
-      "label": "Frame rate limit",
+      "label": "帧率上限",
       "choices": [
         { "label": "30", "set": { "fps_limit": "30" } },
         { "label": "60", "set": { "fps_limit": "60" } },
         { "label": "120", "set": { "fps_limit": "120" } },
         { "label": "144", "set": { "fps_limit": "144" } },
-        { "label": "Unlimited", "set": { "fps_limit": "0" } }
+        { "label": "不限", "set": { "fps_limit": "0" } }
       ],
       "defaults": { "fps_limit": "0" }
     }
