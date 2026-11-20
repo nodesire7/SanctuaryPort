@@ -15,8 +15,37 @@ use crate::core::i18n::tr;
 use crate::core::paths::{default_port_dir, Paths};
 use crate::core::settings::{load_app_settings, Settings};
 use crate::core::update::{self, is_packaged, update_dir};
-use crate::core::{desktop, platform};
+use crate::core::{d3_credit, desktop, platform};
 use crate::{APP_NAME, VERSION};
+
+/// Puts this port's credit line into the game's archives and its update notes, before the game
+/// starts (`core/d3_credit.rs`). A localized release ships a launcher alone, so the fix cannot
+/// live in the Python shell: an installed copy may run an older one - asking it for a function
+/// it does not have is what broke v0.6.7-zh3.
+///
+/// `SANCTUARY_CREDIT_ALIGN=0` leaves the dump untouched. When it is already aligned nothing is
+/// written, and a dump without the translated archive is skipped without a word.
+pub fn align_credit(paths: &Paths, settings: &Settings) {
+    if std::env::var("SANCTUARY_CREDIT_ALIGN").is_ok_and(|value| value == "0") {
+        return;
+    }
+    let resolve = |folder: &str| -> PathBuf {
+        let path = PathBuf::from(folder);
+        if path.as_os_str().is_empty() || path.is_absolute() {
+            path
+        } else {
+            paths.port_dir.join(path)
+        }
+    };
+    let game = resolve(&settings.get_str("game_dir"));
+    let update = resolve(&settings.get_str("update_dir"));
+    if game.as_os_str().is_empty() && update.as_os_str().is_empty() {
+        return;
+    }
+    if let Some(line) = d3_credit::align(&game, &update) {
+        println!("Credit: {line}");
+    }
+}
 
 /// What the command line asks for, with the arguments each role takes.
 #[derive(Debug, Clone, PartialEq, Eq)]

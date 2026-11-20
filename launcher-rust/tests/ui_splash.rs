@@ -19,7 +19,11 @@ fn state_in(dir: &std::path::Path) -> State {
         "APPDATA" | "USERPROFILE" | "HOME" | "XDG_CONFIG_HOME" => Some(root.clone()),
         _ => None,
     };
-    State::new(Paths::from_env(dir, &env))
+    let mut state = State::new(Paths::from_env(dir, &env));
+    // The splash texts asserted below are English; without a saved choice the launcher follows
+    // the system language (a Chinese Windows draws 正在检查设置 instead).
+    state.lang = "en".into();
+    state
 }
 
 #[test]

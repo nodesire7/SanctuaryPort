@@ -5,6 +5,7 @@ pub mod control_profiles;
 pub mod controller_mappings;
 pub mod controls;
 pub mod crash_report;
+pub mod d3_credit;
 pub mod desktop;
 pub mod draw;
 pub mod env;

@@ -60,6 +60,7 @@ fn main() {
             startup::prepare(paths);
             let mut settings = load_app_settings(paths);
             startup::apply_game_options(&mut settings, &args);
+            startup::align_credit(paths, &settings);
             // Without a usable game folder there is nothing to play yet: the window opens instead.
             if Installation::read(
                 &settings.get_str("game_dir"),
@@ -108,6 +109,7 @@ fn main() {
             // Before the folders below are read from the environment.
             startup::apply_to_process(&context);
             startup::prepare(&context.paths);
+            startup::align_credit(&context.paths, &load_app_settings(&context.paths));
             open_window(context.paths);
         }
     }
