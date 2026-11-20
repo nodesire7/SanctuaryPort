@@ -1,15 +1,20 @@
-"""Build the Windows launcher update and its SHA-256 sidecar.
+"""Build the Windows update package and its SHA-256 sidecar.
 
-Two shapes, both read by the launcher's updater:
+The package is an **overlay**: the updater unpacks it over the installation, replacing the
+port's own files and leaving the player's alone (``user/``, ``out/``, ``mods/``, saves,
+``sanctuary.ini``, ``settings.json``). Two shapes:
 
-* a full package carries ``SanctuaryPort.exe`` (a release that changes the launcher itself);
-* a differential package carries only the files that changed since an earlier tag -
-  ``run.py``, ``scripts/*.py``, assets - and no launcher at all. The updater overlays it
-  over the installation and the next start runs it, so a script fix costs a few KB
-  instead of a 20 MB rebuild.
+* the port's runtime - ``run.py``, ``scripts/*.py``, ``assets/``, ``launcher/``, ``patches/``,
+  ``recomplauncher.json`` - always. It is a few hundred KB, so shipping all of it costs
+  nothing and cannot leave an installation with a ``run.py`` that expects a ``scripts/`` it
+  does not have (that is exactly how v0.6.7-zh3 broke on its first publish: builds shipped
+  only the launcher, so the scripts on disk were months older than the release they were
+  diffed against);
+* ``SanctuaryPort.exe`` only with ``--with-launcher``: the releases that change the launcher
+  itself, and the one that has to carry the overlay-capable updater to older installs.
 
-Both declare the tag they install in ``update.json``; a differential package has no binary
-to carry it, and the launcher reads it back to know it is up to date.
+The tag the package installs goes in ``update.json``; the launcher reads it back, so an
+overlay without a new executable still moves the installed version forward.
 """
 import argparse
 import hashlib
@@ -23,27 +28,28 @@ from pathlib import Path
 CRATE = Path(__file__).resolve().parents[2] / "launcher-rust"
 ROOT = CRATE.parent
 
-# What an overlay may replace: the port's runtime, never the build tree or the docs.
-RUNTIME = ("run.py", "run.sh", "scripts/", "assets/", "launcher/", "patches/",
-           "recomplauncher.json")
+# Everything the port runs from: shipped whole at every release.
+RUNTIME = ("run.py", "run.sh", "recomplauncher.json",
+           "scripts", "assets", "launcher", "patches")
+# Files in those folders that belong to a source checkout, not to an installation.
+SKIP = {"__pycache__", ".pyc", ".pyo"}
 
 
-def changed_since(tag):
-    """The runtime files that differ between `tag` and HEAD, newest state, existing only."""
-    out = subprocess.check_output(["git", "diff", "--name-only", f"{tag}..HEAD"],
-                                  cwd=ROOT, text=True)
-    files = []
-    for line in out.splitlines():
-        name = line.strip()
-        if not name or not (ROOT / name).is_file():
-            continue
-        if any(name == entry or name.startswith(entry) for entry in RUNTIME):
-            files.append(name)
-    return files
+def runtime_files():
+    """The port's own files, relative to the repository root, sorted."""
+    names = []
+    for entry in RUNTIME:
+        path = ROOT / entry
+        if path.is_file():
+            names.append(path)
+        elif path.is_dir():
+            names.extend(p for p in sorted(path.rglob("*")) if p.is_file())
+    return [(p, p.relative_to(ROOT)) for p in names
+            if not any(part in SKIP or part.endswith(tuple(SKIP)) for part in p.parts)]
 
 
 def launcher_exe():
-    """The release build of the launcher, rebuilt when stale."""
+    """The crate, and where its release build lands."""
     metadata = json.loads(subprocess.check_output(
         ["cargo", "metadata", "--locked", "--format-version", "1", "--no-deps"], cwd=CRATE
     ))
@@ -56,11 +62,9 @@ def main():
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--revision", type=int, required=True)
     parser.add_argument("--out", type=Path, required=True)
-    parser.add_argument("--delta-from", metavar="TAG",
-                        help="pack only what changed since TAG (implies no launcher rebuild "
-                             "unless --with-launcher)")
     parser.add_argument("--with-launcher", action="store_true",
-                        help="also ship SanctuaryPort.exe (bootstrap a release that needs it)")
+                        help="also ship SanctuaryPort.exe (a launcher change, or the release "
+                             "that brings overlay support to older installations)")
     args = parser.parse_args()
     if sys.platform != "win32" or args.revision < 1:
         parser.error("Use Windows and a positive localization revision number.")
@@ -69,28 +73,24 @@ def main():
     package, exe = launcher_exe()
     tag = f"zh-CN-v{package['version']}-zh{args.revision}"
 
-    ship_launcher = args.with_launcher or not args.delta_from
-    if ship_launcher:
+    if args.with_launcher:
         env = {**os.environ, "SANCTUARY_RELEASE_TAG": tag}
         subprocess.run(["cargo", "build", "--locked", "--release", "--bin", package["name"]],
                        env=env, cwd=CRATE, check=True)
 
-    files = changed_since(args.delta_from) if args.delta_from else []
-
+    files = runtime_files()
     archive = args.out / "SanctuaryPort-launcher-zh-CN.zip"
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as output:
-        if ship_launcher:
+        if args.with_launcher:
             output.write(exe, "SanctuaryPort.exe")
-        for name in files:
-            output.write(ROOT / name, name)
+        for source, name in files:
+            output.write(source, name.as_posix())
         output.writestr("update.json", json.dumps({"tag": tag}, ensure_ascii=False) + "\n")
 
     digest = hashlib.sha256(archive.read_bytes()).hexdigest()
     archive.with_suffix(".zip.sha256").write_bytes(f"{digest}  {archive.name}\n".encode("ascii"))
-    kind = "full" if ship_launcher else "differential"
-    print(f"{tag} {kind} {archive} {digest}")
-    for name in files:
-        print(f"  + {name}")
+    print(f"{tag} {'full' if args.with_launcher else 'runtime'} {archive} {digest}")
+    print(f"  {len(files)} runtime files ({sum(p.stat().st_size for p, _ in files):,} bytes)")
 
 
 if __name__ == "__main__":
