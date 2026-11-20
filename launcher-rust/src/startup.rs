@@ -89,11 +89,13 @@ pub fn apply_game_options<S: AsRef<OsStr>>(settings: &mut Settings, args: &[S]) 
 }
 
 /// Python `install_update`: waits for the old launcher (`pid`) to close, copies this version
-/// (`source`) over `target` and starts it. Returns the exit code.
+/// (`source`) over `target` and starts it. The whole package goes over the installation, not
+/// just the executable, so a differential one carrying changed scripts lands them too; the
+/// player's own files are skipped (update::USER_FILES). Returns the exit code.
 pub fn install_update(source: &Path, target: &Path, pid: u32, lang: &str) -> i32 {
     platform::wait_for_process(pid, Duration::from_secs(60));
     let mut pause = || std::thread::sleep(Duration::from_secs(1));
-    if update::install_launcher(source, target, 30, &mut pause).is_err() {
+    if update::install_over(source, target, 30, &mut pause).is_err() {
         platform::show_error(
             APP_NAME,
             &tr(

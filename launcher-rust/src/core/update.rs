@@ -24,6 +24,18 @@ mod routes;
 const USER_AGENT: &str = "sanctuaryport-launcher";
 const CHUNK: usize = 1 << 20;
 
+/// What a differential package carries beside the files it replaces: the tag it installs. An
+/// overlay of a few scripts has no launcher of its own, so the installed version has to be read
+/// back from here - otherwise the same update would be offered again at every start.
+pub const STATE_FILE: &str = "update.json";
+
+/// The tag the last applied package declared (`update.json` in the port folder), when readable.
+pub fn applied(port_dir: &Path) -> Option<ReleaseId> {
+    let text = fs::read_to_string(port_dir.join(STATE_FILE)).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&text).ok()?;
+    ReleaseId::parse(json.get("tag")?.as_str()?, false)
+}
+
 #[derive(Debug, Error)]
 pub enum UpdateError {
     #[error(transparent)]
@@ -472,7 +484,9 @@ impl GitHubReleases {
 
 impl ReleaseHost for GitHubReleases {
     fn installed(&self) -> ReleaseId {
-        ReleaseId::this()
+        // A differential package moves the installed version without replacing the launcher, so
+        // what it declared wins over the tag this binary was compiled with.
+        applied(&self.port_dir).unwrap_or_else(ReleaseId::this)
     }
 
     fn target(&self) -> InstallTarget {
@@ -553,8 +567,13 @@ fn install_windows(release: &release::Release, port_dir: &Path, report: &mut dyn
         .and_then(|mut package| package.extract(&new))
         .map_err(text)?;
     let _ = fs::remove_file(&archive);
-    let folder = find_launcher(&new)
-        .ok_or_else(|| format!("{PACKAGED_EXE} is missing from the download"))?;
+    let Some(folder) = find_launcher(&new) else {
+        // A differential package holds only the files that changed - run.py, scripts/*.py - and
+        // no launcher: nothing to start, the overlay is applied here and the next start runs it.
+        // The tag it installs comes from its update.json, not from a binary.
+        let mut pause = || std::thread::sleep(Duration::from_secs(1));
+        return install_over(&new, port_dir, 3, &mut pause).map_err(text);
+    };
     let mut command = Command::new(folder.join(PACKAGED_EXE));
     command
         .arg("--install-update")
@@ -777,6 +796,19 @@ mod tests {
     fn a_library_path_is_kept_without_an_appdir() {
         let env = map(&[("LD_LIBRARY_PATH", "/opt/lib")]);
         assert_eq!(relaunch_environment(&env)["LD_LIBRARY_PATH"], "/opt/lib");
+    }
+
+    #[test]
+    fn an_applied_overlay_moves_the_installed_version() {
+        // A differential package has no launcher to compile a tag into: it declares its own.
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(applied(dir.path()), None);
+        fs::write(dir.path().join(STATE_FILE), r#"{"tag":"zh-CN-v0.6.7-zh4"}"#).unwrap();
+        let id = applied(dir.path()).expect("the declared tag is read back");
+        assert_eq!(id.version, "0.6.7");
+        assert_eq!(id.build.as_deref(), Some("zh4"));
+        fs::write(dir.path().join(STATE_FILE), "not json").unwrap();
+        assert_eq!(applied(dir.path()), None);
     }
 
     #[test]
