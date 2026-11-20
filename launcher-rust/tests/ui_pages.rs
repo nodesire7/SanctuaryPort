@@ -767,6 +767,7 @@ fn brazilian_portuguese_label_is_translated_in_portuguese_and_spanish() {
 // --- Trophies page (Task 27) ---
 
 use common::TROPHY_COUNT;
+use sanctuaryport_launcher::core::trophies::{trophy_group, trophy_info};
 use sanctuaryport_launcher::ui::pages::trophies::{Filter, TrophiesMessage};
 
 fn tall_has(state: &app::State, label: &str) -> bool {
@@ -793,11 +794,15 @@ fn trophies_page_lists_35_cards_from_a_test_package() {
     );
     assert!(!state.trophies.loading);
     assert!(tall_has(&state, "2 of 35 unlocked"));
-    // Names and descriptions from the built-in Diablo III list (ids 0 and 34 of 0..35).
-    assert!(tall_has(&state, "Diablo III: Reaper of Souls Platinum Trophy"));
-    assert!(tall_has(&state, "Demolition Derby"));
-    assert!(tall_has(&state, "Get a destruction callout for breaking 50 objects."));
-    assert!(tall_has(&state, "Diablo III: Reaper of Souls"));
+    // Names and descriptions from the built-in Diablo III list (ids 0 and 34 of 0..35). That
+    // list is translated per branch (here 白金奖杯 / 土木工程), so the expectations are read from
+    // it: what the page must do is show those texts, not any one language's.
+    let platinum = trophy_info(0).unwrap();
+    let last = trophy_info(34).unwrap();
+    assert!(tall_has(&state, &platinum.name));
+    assert!(tall_has(&state, &last.name));
+    assert!(tall_has(&state, &last.description));
+    assert!(tall_has(&state, &trophy_group(platinum.group).unwrap().name));
     assert!(tall_has(
         &state,
         "Only trophies unlocked with this port are listed; the ones earned on a PlayStation are not known to it."
@@ -824,10 +829,12 @@ fn filter_unlocked_hides_locked() {
     let mut state = state_with_trophies(dir.path());
     open(&mut state, Page::Trophies);
     load_trophies(&mut state);
+    // Ids 0 and 3 are the unlocked ones of the test package, 1 stays locked; the names come
+    // from the built-in list, which this branch translates.
     let (first, second, other) = (
-        "Diablo III: Reaper of Souls Platinum Trophy".to_string(),
-        "Up All Night To Get Lucky".to_string(),
-        "Deep Pockets".to_string(),
+        trophy_info(0).unwrap().name.clone(),
+        trophy_info(3).unwrap().name.clone(),
+        trophy_info(1).unwrap().name.clone(),
     );
     let _ = app::update(
         &mut state,

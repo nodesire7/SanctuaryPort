@@ -475,7 +475,7 @@ fn partial_save_failure_keeps_pending_state() {
     save(&mut state);
     let modal = state.modal.take().expect("an error dialog");
     assert!(matches!(modal.kind, ModalKind::Error));
-    assert_eq!(modal.text, tr("en", SAVE_FAILED));
+    assert_eq!(modal.text, tr(&state.lang, SAVE_FAILED));
     assert!(dirty(&state));
     assert!(temp_files(dir.path()).is_empty());
     fs::remove_dir(&config).unwrap();
@@ -648,10 +648,13 @@ fn block_settings(state: &State) {
 }
 
 fn save_failed_shown(state: &State) -> bool {
+    // In the launcher's language: without a saved choice it follows the system, and these
+    // tests run on machines that are not English.
+    let expected = tr(&state.lang, SAVE_FAILED);
     state
         .modal
         .as_ref()
-        .is_some_and(|modal| matches!(modal.kind, ModalKind::Error) && modal.text == SAVE_FAILED)
+        .is_some_and(|modal| matches!(modal.kind, ModalKind::Error) && modal.text == expected)
 }
 
 #[test]
@@ -763,13 +766,15 @@ fn unreadable_settings_files_warn_once_at_start() {
             shown.text
         );
     }
-    assert!(
-        shown
-            .text
-            .contains("The files stay as they are until you save"),
-        "{}",
-        shown.text
-    );
+    // The whole dialog is the module's own message, in the launcher's language: the files it
+    // names are checked above, the wording is not this test's business (it follows the system
+    // language when no choice is saved, and this machine is not English).
+    let expected = sanctuaryport_launcher::ui::persist::unreadable_warning(
+        &state.lang,
+        &[state.paths.config_file(), state.paths.ini_path()],
+    )
+    .expect("the same warning");
+    assert_eq!(shown.text, expected.text);
     // The defaults are shown and nothing is written before a save.
     assert_eq!(state.store.text("ui_language"), ""); // the default: follow the system
     assert_eq!(fs::read(state.paths.config_file()).unwrap(), b"{not json");

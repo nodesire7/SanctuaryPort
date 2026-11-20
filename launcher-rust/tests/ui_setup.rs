@@ -33,6 +33,9 @@ fn opened(dir: &Path) -> State {
         _ => None,
     };
     let mut state = State::open(Paths::from_env(dir, &env));
+    // The steps assert English labels; without a saved choice the launcher follows the system
+    // language (a Chinese Windows drew 第 2 步 / 第 3 步 instead of "Step 2 of 3").
+    state.lang = "en".into();
     state.splash.done = true;
     state
 }

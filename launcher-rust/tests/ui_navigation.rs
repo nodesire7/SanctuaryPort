@@ -51,6 +51,14 @@ const WIDE: [Page; 4] = [
 
 /// A state over `dir` only: data and ini live there.
 fn state_in(dir: &Path) -> State {
+    // The tabs are what these tests are about, not the language of the host: without a saved
+    // choice the launcher follows the system one, and a Chinese Windows names the tabs 图形/
+    // 游戏/... while every click below looks for "Graphics". A test that wants another
+    // language writes its own settings.json first, which then wins over this default.
+    let settings = dir.join("settings.json");
+    if !settings.exists() {
+        std::fs::write(&settings, r#"{"ui_language": "en"}"#).unwrap();
+    }
     let mut state = State::new(Paths::from_env(dir, &|_| None));
     // These tests are about the tabs, not the splash that covers them at start.
     state.splash.done = true;

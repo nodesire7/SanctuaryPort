@@ -16,7 +16,7 @@ use common::releases::{next_call, Call, FakeReleases};
 use common::sfo;
 use iced_test::simulator::simulator;
 use serde_json::json;
-use sanctuaryport_launcher::core::launch::Exit;
+use sanctuaryport_launcher::core::launch::{self, Exit};
 use sanctuaryport_launcher::core::log::ExitHint;
 use sanctuaryport_launcher::core::paths::Paths;
 use sanctuaryport_launcher::core::release::{Channel, Release, ReleaseId};
@@ -43,6 +43,12 @@ fn state_in(dir: &Path) -> State {
 
 /// `state_in` over a release host of the test's.
 fn state_over(dir: &Path, host: Arc<dyn ReleaseHost>) -> State {
+    // The texts asserted below are English; without a saved choice the launcher follows the
+    // system language, and a Chinese Windows answered 请选择包含 eboot.bin 的游戏文件夹 instead.
+    let settings = dir.join("settings.json");
+    if !settings.exists() {
+        fs::write(&settings, r#"{"ui_language": "en"}"#).unwrap();
+    }
     let root = dir.display().to_string();
     let env = move |key: &str| match key {
         "APPDATA" | "USERPROFILE" | "HOME" | "XDG_CONFIG_HOME" => Some(root.clone()),
@@ -554,8 +560,9 @@ fn play_refuses_an_incomplete_port() {
     full_dump(&dump);
     let mut state = state_in(dir.path());
     set(&mut state, "game_dir", json!(text_of(&dump)));
-    // SanctuaryPort: run.sh first, then the probe it starts.
-    let missing = vec!["run.sh".to_string(), probe_file()];
+    // SanctuaryPort: the runner first (run.sh on Linux and macOS, run.py on Windows, which has
+    // no bash), then the probe it starts.
+    let missing = vec![launch::runner_file(cfg!(windows)).to_string(), probe_file()];
     assert_eq!(play::missing_port_files(&state.paths), missing);
     send(&mut state, Message::Play);
     assert!(idle(&state));
@@ -595,7 +602,7 @@ fn play_refuses_an_incomplete_port() {
     let probe = dir.path().join(probe_file());
     std::fs::create_dir_all(probe.parent().unwrap()).unwrap();
     std::fs::write(&probe, b"").unwrap();
-    std::fs::write(dir.path().join("run.sh"), b"").unwrap();
+    std::fs::write(dir.path().join(launch::runner_file(cfg!(windows))), b"").unwrap();
     assert!(play::missing_port_files(&state.paths).is_empty());
 }
 
@@ -1150,17 +1157,19 @@ fn the_fire_clock_comes_back_after_the_game_exits() {
 }
 
 #[test]
-fn play_runs_the_ports_run_sh() {
-    // SanctuaryPort: PLAY starts the port's run.sh (game profiles, runtime switches); a port
-    // folder without it falls back to the built-in runner.
+fn play_runs_the_ports_runner() {
+    // SanctuaryPort: PLAY starts the port's own runner (game profiles, runtime switches) - bash
+    // run.sh on Linux and macOS, run.py with the shipped Python on Windows; a port folder
+    // without it falls back to the built-in runner.
     let dir = tempfile::tempdir().unwrap();
-    let run_sh = dir.path().join("run.sh");
-    std::fs::write(&run_sh, b"#!/usr/bin/env bash\n").unwrap();
+    let runner = dir.path().join(launch::runner_file(cfg!(windows)));
+    std::fs::write(&runner, b"").unwrap();
     let state = state_in(dir.path());
-    assert_eq!(
-        state.launch_command,
-        Some(vec!["bash".to_string(), run_sh.to_string_lossy().into_owned()])
-    );
+    let command = state.launch_command.clone().expect("the runner is used");
+    assert_eq!(Path::new(command.last().unwrap()), runner.as_path());
+    if !cfg!(windows) {
+        assert_eq!(command.first().unwrap(), "bash");
+    }
     let bare = tempfile::tempdir().unwrap();
     assert_eq!(state_in(bare.path()).launch_command, None);
 }
