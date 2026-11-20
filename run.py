@@ -309,6 +309,16 @@ def main():
             layers = [game, Path(base_game).resolve()]
             env['SANCTUARY_APP0_LOWER'] = str(layers[1])
             print(f'Game and update read in place from {env["SANCTUARY_PATCH_DIR"]}', flush=True)
+    if env.get('SANCTUARY_PATCH_DIR') and env.get('SANCTUARY_CREDIT_ALIGN', '1') != '0':
+        # A game update replaces the archive that holds the translation team's credit line, so it
+        # is put back on every start; when it is already aligned this reads one string list and
+        # writes nothing (scripts/d3_credit.py). SANCTUARY_CREDIT_ALIGN=0 keeps the dump as it is.
+        try:
+            import d3_credit
+            d3_credit.align(base_game, env['SANCTUARY_PATCH_DIR'],
+                            log=lambda line: print(line, flush=True))
+        except Exception as error:  # noqa: BLE001  (a credit line is not worth a failed start)
+            print(f'Credit: not aligned ({error})', flush=True)
     original_game = game.resolve()
     game = run_mods(game)
     mod_view = game if game.resolve() != original_game else None
