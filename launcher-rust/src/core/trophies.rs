@@ -353,11 +353,17 @@ mod tests {
             assert!(trophy_group(info.group).is_some());
         }
         assert_eq!(listed_tier(0), Some(Tier::Platinum));
-        assert_eq!(trophy_info(1).unwrap().name, "Deep Pockets");
-        assert_eq!(
-            trophy_group(trophy_info(53).unwrap().group).unwrap().name,
-            "Diablo III: Rise of the Necromancer"
-        );
+        // The texts come from assets/trophies/Diablo_III.json, which every localization of this
+        // branch translates (this one names 1 "腰缠万贯" and the add-on group "死灵再世"), so the
+        // test asks for what the list must guarantee - each trophy named once, placed in a group
+        // - rather than for one language's wording.
+        assert_eq!(listed_tier(1), Some(Tier::Bronze));
+        let names: std::collections::BTreeSet<&str> = (0..54)
+            .filter_map(|id| trophy_info(id).map(|trophy| trophy.name.as_str()))
+            .collect();
+        assert_eq!(names.len(), 54);
+        assert_eq!(trophy_info(53).unwrap().group, 1);
+        assert!(trophy_group(1).is_some());
         assert!(trophy_info(54).is_none());
     }
 

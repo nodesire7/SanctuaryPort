@@ -375,6 +375,11 @@ mod cli_tests {
         let text = std::fs::read_to_string(&ini).unwrap();
         assert!(text.starts_with("# mine\nframe_rate=120\nfxaa=1\n"));
         assert!(text.contains("display_mode=fullscreen") && text.contains("vertical_sync=1"));
-        assert_eq!(cli_data_dir(&["--data-dir", "/tmp/x"]), Some(PathBuf::from("/tmp/x")));
+        // `--data-dir` promises an absolute folder, not a spelling: "/tmp/x" is "C:\tmp\x" on
+        // Windows, so a fixed string cannot be the expectation (it was "/tmp/x" and broke there).
+        let made = cli_data_dir(&["--data-dir", "sanctuary-data"]).unwrap();
+        assert!(made.is_absolute());
+        assert!(made.ends_with("sanctuary-data"));
+        assert_eq!(cli_data_dir(&["--play"]), None);
     }
 }
