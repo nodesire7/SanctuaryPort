@@ -33,7 +33,7 @@ static set_pointer_t real_set_pointer;
 /* The credit line the game shows, replaced in the bytes it reads. Both are 36 bytes. */
 static const char CREDIT_OLD[] = "GKinto.com 游戏大桶 汉化制作";
 static const char CREDIT_NEW[] = "bbs.GBTGame.me 海量游戏尽在GBT";
-#define CREDIT_ARCHIVE L"\\enUS_Patch2_7_7.cpk"
+#define CREDIT_ARCHIVE L"\\enUS_Patch2_7_7.cpk" /* the name is matched after the last separator */
 
 /* Handles opened on that archive, with the position the caller is reading at. */
 #define TRACKED 16
@@ -55,10 +55,21 @@ static void patch_everywhere(void);
 
 /* ---------------------------------------------------------------- helpers */
 
+/* The port passes `...\CUSA00242-UPDATE/CPKs/x.cpk` (its own path joins use '/'), so a suffix
+ * match has to accept either separator. */
 static BOOL ends_with_ci(const WCHAR *text, const WCHAR *suffix) {
     size_t have = lstrlenW(text), want = lstrlenW(suffix);
     if (want > have) return FALSE;
     return lstrcmpiW(text + (have - want), suffix) == 0;
+}
+
+/* The file name after the last '\' or '/', or the whole path when it has neither. */
+static const WCHAR *file_name(const WCHAR *path) {
+    const WCHAR *at = path, *name = path;
+    for (; *at; at++) {
+        if (*at == L'\\' || *at == L'/') name = at + 1;
+    }
+    return name;
 }
 
 /* The translated copy of `path` when this package ships one, else NULL. */
@@ -66,11 +77,11 @@ static const WCHAR *translated_for(const WCHAR *path) {
     static WCHAR candidate[MAX_PATH];
     const WCHAR *name;
 
-    if (ends_with_ci(path, L"\\assets\\i18n.json")) {
+    if (ends_with_ci(path, L"assets/i18n.json") || ends_with_ci(path, L"assets\\i18n.json")) {
         name = L"i18n.json";
-    } else if (ends_with_ci(path, L"\\assets\\trophies\\Diablo_III.json")) {
+    } else if (ends_with_ci(path, L"trophies/Diablo_III.json") || ends_with_ci(path, L"trophies\\Diablo_III.json")) {
         name = L"trophies.json";
-    } else if (ends_with_ci(path, L"\\changeinfo.xml")) {
+    } else if (lstrcmpiW(file_name(path), L"changeinfo.xml") == 0) {
         name = L"changeinfo.xml";
     } else {
         return NULL;
@@ -85,7 +96,7 @@ static const WCHAR *translated_for(const WCHAR *path) {
 /* Remembers a handle opened on the credit archive, preparing the rebuilt sectors once. */
 static void track(HANDLE handle, const WCHAR *path) {
     int slot;
-    if (!path || !ends_with_ci(path, CREDIT_ARCHIVE)) return;
+    if (!path || lstrcmpiW(file_name(path), CREDIT_ARCHIVE + 1) != 0) return;
     if (InterlockedCompareExchange(&archive_state, 1, 0) == 0) {
         hu_archive *found = hu_cpk_prepare(path, CREDIT_OLD, CREDIT_NEW);
         archive = found;
@@ -225,6 +236,21 @@ static HANDLE WINAPI hook_create_file(LPCWSTR path, DWORD access, DWORD share,
     return result;
 }
 
+/* The port opens its archives through the C runtime, so the executable itself may import none
+ * of the APIs this hook needs (sanctuary-probe.exe imports no CreateFileW: ucrtbase does). A
+ * thread started from DllMain patches every loaded module once the loader lock is gone, and
+ * keeps catching modules loaded later; the lazy patch on the first hooked call would never
+ * start when nothing is hooked yet. */
+static DWORD WINAPI installer_thread(LPVOID unused) {
+    int round;
+    (void)unused;
+    for (round = 0; round < 40; round++) {
+        Sleep(round == 0 ? 20 : 250);
+        patch_everywhere();
+    }
+    return 0;
+}
+
 /* ---------------------------------------------------------------- install */
 
 void hu_install_hooks(HINSTANCE self) {
@@ -249,4 +275,5 @@ void hu_install_hooks(HINSTANCE self) {
     /* Only the executable here: inside DllMain the loader lock makes a module snapshot
        unreliable, and the executable is the module whose calls matter first. */
     patch_module(GetModuleHandleW(NULL), "CreateFileW", (void *)&hook_create_file);
+    CloseHandle(CreateThread(NULL, 0, installer_thread, NULL, 0, NULL));
 }
