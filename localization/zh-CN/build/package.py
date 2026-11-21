@@ -1,13 +1,11 @@
 """Wrap a built launcher and its tag into the localization update package.
 
-The updater on Windows looks for ``SanctuaryPort-launcher-zh-CN.zip`` in the release of a
-``zh-CN-v*`` tag and unpacks it over the installation: ``SanctuaryPort.exe`` replaces the
-launcher, ``update.json`` says which tag is installed (a package carries no other file - the
-port's scripts and binaries come from the full port package and must not be mixed, see
-``scripts/d3_credit.py``'s history).
+The updater looks for ``SanctuaryPort-launcher-zh-CN.zip`` in the release of a ``zh-CN-v*``
+tag and unpacks it over the installation: ``SanctuaryPort.exe`` replaces the launcher and
+``update.json`` says which tag is installed. Only the launcher is in the package - run.py,
+scripts/ and bin/ belong to the port release and must not be mixed across versions.
 
-Called by the localization workflow after the cross build, and by ``package.py`` for a local
-build; it needs nothing but Python.
+usage: python package.py --exe PATH --tag TAG --out DIR
 """
 import argparse
 import hashlib
@@ -19,7 +17,6 @@ ARCHIVE = "SanctuaryPort-launcher-zh-CN.zip"
 
 
 def build(exe: Path, tag: str, out: Path) -> Path:
-    """The zip for `exe` as `tag`, with its `.sha256` beside it; returns the zip's path."""
     out.mkdir(parents=True, exist_ok=True)
     archive = out / ARCHIVE
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as package:
@@ -33,8 +30,8 @@ def build(exe: Path, tag: str, out: Path) -> Path:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--exe", type=Path, required=True, help="the built launcher")
-    parser.add_argument("--tag", required=True, help="the zh-CN tag it installs, e.g. zh-CN-v0.6.7-zh5")
+    parser.add_argument("--exe", type=Path, required=True)
+    parser.add_argument("--tag", required=True)
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
     archive = build(args.exe, args.tag, args.out)

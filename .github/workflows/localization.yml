@@ -1,66 +1,104 @@
-# Builds the zh-CN launcher update on a `zh-CN-v*` tag and publishes it.
+# Builds the Chinese localization of the latest upstream release.
 #
-# The package is the launcher alone (SanctuaryPort.exe) plus update.json: the launcher carries
-# the localization fixes itself (the translation credit is rewritten by core/d3_credit.rs), and
-# the port's scripts and binaries come from the full port package - shipping them here broke
-# v0.6.7-zh3, where an older installed port met newer scripts. The Windows cross build is the
-# same one packaging/windows/package.sh uses for the launcher.
+# Nothing of this fork is merged into upstream. The job checks out this branch for the
+# localization sources, clones the upstream release tag into a throwaway folder, applies the
+# translations there (build/apply.py), builds the launcher, and publishes the package on a
+# `zh-CN-v<version>-zh<revision>` tag. Upstream can move without a single conflict.
 name: localization
 
 on:
-  push:
-    tags: ['zh-CN-v*']
   workflow_dispatch:
     inputs:
-      tag:
-        description: 'zh-CN tag to build and publish (e.g. zh-CN-v0.6.7-zh5)'
-        required: true
+      revision:
+        description: 'Localization revision for this upstream version (bump to republish)'
+        required: false
+        default: '1'
+  schedule:
+    - cron: '30 3 * * *'
+  push:
+    branches: [zh-CN]
+    paths:
+      - 'localization/**'
+      - '.github/workflows/localization.yml'
 
 permissions:
   contents: write
 
 jobs:
-  launcher:
+  package:
     runs-on: ubuntu-24.04
+    env:
+      REVISION: ${{ github.event.inputs.revision || '1' }}
     steps:
       - uses: actions/checkout@v4
+      - name: The upstream version to localize
+        id: upstream
+        run: |
+          version=$(git ls-remote --tags --refs https://github.com/CaduGimenes/SanctuaryPort.git \
+            | awk -F/ '{print $NF}' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1)
+          [ -n "$version" ] || { echo 'no upstream release tag found' >&2; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=zh-CN-$version-zh$REVISION" >> "$GITHUB_OUTPUT"
+      - name: Already published?
+        id: published
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${{ steps.upstream.outputs.tag }}" >/dev/null 2>&1; then
+            echo "skip=yes" >> "$GITHUB_OUTPUT"
+            echo "${{ steps.upstream.outputs.tag }} exists; nothing to do"
+          else
+            echo "skip=no" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Upstream checkout with the translations applied
+        if: steps.published.outputs.skip == 'no'
+        run: |
+          git clone --depth 1 --branch "${{ steps.upstream.outputs.version }}" \
+            https://github.com/CaduGimenes/SanctuaryPort.git upstream
+          python3 localization/zh-CN/build/apply.py upstream
       - name: Toolchain
+        if: steps.published.outputs.skip == 'no'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64
           curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
           source "$HOME/.cargo/env"
-          (cd launcher-rust && rustup target add x86_64-pc-windows-gnu)
-      - name: Build
+          (cd upstream/launcher-rust && rustup target add x86_64-pc-windows-gnu)
+      - name: Build the launcher
+        if: steps.published.outputs.skip == 'no'
         env:
-          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          TAG: ${{ steps.upstream.outputs.tag }}
         run: |
           source "$HOME/.cargo/env"
-          cd launcher-rust
+          cd upstream/launcher-rust
           SANCTUARY_RELEASE_TAG="$TAG" \
           CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc \
           CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS="--remap-path-prefix=$HOME=~" \
             cargo build --locked --release --target x86_64-pc-windows-gnu --bin sanctuaryport-launcher
       - name: Package
+        if: steps.published.outputs.skip == 'no'
         env:
-          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          TAG: ${{ steps.upstream.outputs.tag }}
         run: |
-          python3 localization/zh-CN/package_launcher.py \
-            --exe launcher-rust/target/x86_64-pc-windows-gnu/release/sanctuaryport-launcher.exe \
+          python3 localization/zh-CN/build/package.py \
+            --exe upstream/launcher-rust/target/x86_64-pc-windows-gnu/release/sanctuaryport-launcher.exe \
             --tag "$TAG" --out dist
+          ls -l dist
       - uses: actions/upload-artifact@v4
+        if: steps.published.outputs.skip == 'no'
         with:
           name: SanctuaryPort-launcher-zh-CN
           path: |
             dist/SanctuaryPort-launcher-zh-CN.zip
             dist/SanctuaryPort-launcher-zh-CN.zip.sha256
       - name: Publish
+        if: steps.published.outputs.skip == 'no'
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          TAG: ${{ steps.upstream.outputs.tag }}
+          VERSION: ${{ steps.upstream.outputs.version }}
         run: |
-          # Published at once: the updater only offers releases that are neither drafts nor
-          # prereleases, and it looks for this asset name in the release of the tag.
-          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" --notes ""
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" \
+            --notes "SanctuaryPort $VERSION 简体中文（汉化修订 $REVISION）"
           gh release upload "$TAG" dist/SanctuaryPort-launcher-zh-CN.zip \
               dist/SanctuaryPort-launcher-zh-CN.zip.sha256 --clobber

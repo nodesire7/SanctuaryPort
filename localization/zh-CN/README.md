@@ -1,31 +1,38 @@
-# SanctuaryPort 简体中文启动器
+# SanctuaryPort 简体中文汉化
 
-汉化作者 **A-FEI-** · [GBTGAME 论坛](https://bbs.gbtgame.me)
+汉化作者：**A-FEI-** · [GBTGAME 论坛](https://bbs.gbtgame.me)
 
-适用于已有的 SanctuaryPort Windows 游戏目录。首次安装时，把汉化发布包中的 `SanctuaryPort.exe` 解压到现有启动器所在目录。以后可在首页右上角的版本菜单或「高级 → 检查更新」安装新版。启动时检查更新由「高级」中的开关控制。
+本分支**只保存汉化本身**，不含任何上游代码，也不修改上游的任何文件。上游更新由
+`main` 分支自动跟随，汉化在**构建时**注入到一份干净的上游检出里，因此永远不会有合并冲突。
 
-更新器通过 GitHub API 获取本分支的发布记录，从同一个 ZIP 并行试读最多 256 KiB，对 GitHub 直连、GHFast、GH-Proxy 按实际吞吐量排序。完整下载失败或 SHA-256 与 GitHub 的记录不符时，自动尝试下一条线路。线路速度随网络变化，每次下载重新测量。若 GitHub API 限流或无法访问，启动器会改用 GitHub 官方发布页查询最新汉化版本，并从同一版本的校验文件读取 SHA-256。
+## 结构
 
-Windows 汉化更新只安装启动器。游戏内菜单使用原有汉化运行库，剧情和语音使用当前游戏目录中的语言包。单独安装此 ZIP 需要已有运行环境。
-
-## 跟进上游
-
-在 `zh-CN` 分支运行（需要 Git 2.38 或更高版本）：
-
-```powershell
-python -X utf8 localization/zh-CN/sync.py
+```
+data/launcher.json     启动器界面词条（英文 → 中文），构建时合并进 assets/i18n.json 的 extra.zh
+data/trophies.json     奖杯名与说明（按奖杯 id），构建时写进 assets/trophies/Diablo_III.json
+build/apply.py         把上面两份数据应用到一份上游检出
+build/package.py       把编译好的启动器打成更新包（SanctuaryPort.exe + update.json）
+dll/                   游戏内署名的运行时替换（SDL3 代理 DLL，构建中）
 ```
 
-同步工具先预演合并，按键核对启动器词表、奖杯及外部启动器设置的已有译文。遇到合并冲突或译文变化时列出问题并停止，分支仍保持在同步前的提交。合并后核对上游改名或新增的英文条目，并运行以下命令测试和构建：
+启动器的界面文案和奖杯表是 `include_str!` **编译进 exe** 的，运行时没有文件可读，
+所以汉化只能发生在构建阶段；这也是本分支只保存数据、由构建去注入的原因。
 
-```powershell
-python -X utf8 launcher-rust/tools/i18n_audit.py zh
-Push-Location launcher-rust
-cargo test --locked --release --lib core::update
-Pop-Location
-python localization/zh-CN/package.py --revision 1 --out dist
+## 自动流程
+
+| 工作流 | 作用 |
+|---|---|
+| `.github/workflows/sync-upstream.yml` | 每 6 小时把 `main` 强制同步到 `CaduGimenes/SanctuaryPort` 的最新提交，并在有变化时触发汉化构建 |
+| `.github/workflows/localization.yml` | 每天/手动：取上游最新 release 标签 → 克隆该标签 → 应用汉化 → 编译启动器 → 发布 `zh-CN-v<版本>-zh<修订>` |
+
+更新包只含启动器（约 20 MB）。`run.py`、`scripts/`、`bin/` 属于端口发布，不能跨版本混装。
+
+## 手动重建
+
+翻译改了以后，用新修订号重新发布同一上游版本：
+
+```
+Actions → localization → Run workflow → revision: 2
 ```
 
-同一上游版本的汉化修订号依次递增。构建脚本输出 ZIP、校验文件和发布标签，例如 `zh-CN-v0.6.7-zh1`。把汉化分支推送到自己的 fork，并使用这个标签在汉化提交上发布这两个附件。更新器识别名为 `SanctuaryPort-launcher-zh-CN.zip` 的附件。
-
-启动器词条保存在 `localization/zh-CN/launcher.json`，奖杯页面词条在 `trophy-ui.json`。查找时优先采用分支译文，新条目可沿用上游翻译。奖杯内容位于 `assets/trophies/Diablo_III.json`，外部启动器设置位于 `recomplauncher.json`。
+只有 `zh-CN-v<版本>-zh<修订>` 尚未发布时才会构建，所以重复触发是安全的。
