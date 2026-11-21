@@ -1,0 +1,66 @@
+# Builds the zh-CN launcher update on a `zh-CN-v*` tag and publishes it.
+#
+# The package is the launcher alone (SanctuaryPort.exe) plus update.json: the launcher carries
+# the localization fixes itself (the translation credit is rewritten by core/d3_credit.rs), and
+# the port's scripts and binaries come from the full port package - shipping them here broke
+# v0.6.7-zh3, where an older installed port met newer scripts. The Windows cross build is the
+# same one packaging/windows/package.sh uses for the launcher.
+name: localization
+
+on:
+  push:
+    tags: ['zh-CN-v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'zh-CN tag to build and publish (e.g. zh-CN-v0.6.7-zh5)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  launcher:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64
+          curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+          source "$HOME/.cargo/env"
+          (cd launcher-rust && rustup target add x86_64-pc-windows-gnu)
+      - name: Build
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          source "$HOME/.cargo/env"
+          cd launcher-rust
+          SANCTUARY_RELEASE_TAG="$TAG" \
+          CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc \
+          CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS="--remap-path-prefix=$HOME=~" \
+            cargo build --locked --release --target x86_64-pc-windows-gnu --bin sanctuaryport-launcher
+      - name: Package
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          python3 localization/zh-CN/package_launcher.py \
+            --exe launcher-rust/target/x86_64-pc-windows-gnu/release/sanctuaryport-launcher.exe \
+            --tag "$TAG" --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SanctuaryPort-launcher-zh-CN
+          path: |
+            dist/SanctuaryPort-launcher-zh-CN.zip
+            dist/SanctuaryPort-launcher-zh-CN.zip.sha256
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          # Published at once: the updater only offers releases that are neither drafts nor
+          # prereleases, and it looks for this asset name in the release of the tag.
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" --notes ""
+          gh release upload "$TAG" dist/SanctuaryPort-launcher-zh-CN.zip \
+              dist/SanctuaryPort-launcher-zh-CN.zip.sha256 --clobber

@@ -73,6 +73,10 @@ cp -r scripts patches "$dest/"
 cp run.py LICENSE README.md COMO_JOGAR.md packaging/windows/README-Windows.txt "$dest/"
 # RecompLauncher reads this next to the executable.
 cp recomplauncher.json "$dest/"
+# The launcher compares this with its own version at start (launcher-rust/src/core/port_core.rs):
+# a port older than the launcher is named there instead of failing deep inside the game.
+version=$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' launcher-rust/Cargo.toml | head -n 1)
+printf '{"version": "%s"}\n' "$version" > "$dest/port.json"
 find "$dest" -name __pycache__ -prune -exec rm -r {} +
 # No game files and nothing a player made (saves, shader caches built from the game's shaders,
 # settings, logs) may ship: stop when one is found.

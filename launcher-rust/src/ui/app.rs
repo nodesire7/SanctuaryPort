@@ -23,6 +23,7 @@ use crate::core::log::{LogBuffer, MAX_LOG_LINES};
 use crate::core::paths::Paths;
 use crate::core::platform;
 use crate::core::platform::tool::SystemTools;
+use crate::core::port_core;
 use crate::core::release::ReleaseId;
 use crate::core::settings::SettingsFile;
 use crate::core::store::Store;
@@ -284,6 +285,13 @@ impl State {
         // Nothing to save after opening.
         state.saved = Some(persist::gather(&state));
         state.modal = persist::unreadable_warning(&state.lang, &unreadable);
+        // A port older than this launcher looks healthy here and fails deep inside the game
+        // (core/port_core.rs), so the mismatch is said once, at start.
+        if state.modal.is_none() {
+            if let Some(text) = port_core::stale(&state.paths.port_dir) {
+                state.modal = Some(Modal::error(tr(&state.lang, &text)));
+            }
+        }
         state
     }
 }

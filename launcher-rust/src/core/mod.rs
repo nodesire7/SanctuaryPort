@@ -25,6 +25,7 @@ pub mod patches;
 pub mod pkg_install;
 pub mod paths;
 pub mod platform;
+pub mod port_core;
 pub mod python;
 pub mod release;
 pub mod save_backup;

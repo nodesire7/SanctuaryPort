@@ -1,31 +1,27 @@
-"""Build the Windows launcher update and its SHA-256 sidecar.
+"""Build the Windows launcher update locally and its SHA-256 sidecar.
 
-The package holds two things:
+The localization workflow (``.github/workflows/localization.yml``) does the same on GitHub
+after a cross build; this is the local path, for trying a package before tagging. Both hand
+the wrapping to ``package_launcher.py``, so the zip has one shape.
 
-* ``SanctuaryPort.exe`` - the localization's launcher. It carries its own fixes: the translation
-  team's credit line is rewritten by the launcher itself (``core/d3_credit.rs``), so an update
-  no longer needs to touch the port's Python shell. Shipping ``run.py``/``scripts`` here was a
-  mistake once: those belong to the port release and must match the native binaries they drive,
-  and an installed copy can be an older build;
-* ``update.json`` - the tag this package installs, so the updater knows what is on disk even
-  though the launcher it replaced reports the tag it was built with.
-
-The updater unpacks the package over the installation and skips the player's files
-(``update::USER_FILES``): saves, settings, mods and the dump stay as they are.
+The package holds ``SanctuaryPort.exe`` and ``update.json`` only: the launcher carries its own
+fixes (the translation credit is rewritten by ``core/d3_credit.rs``), and the port's scripts and
+binaries belong to the full port package - mixing them broke v0.6.7-zh3.
 """
 import argparse
-import hashlib
 import json
 import os
 import subprocess
 import sys
-import zipfile
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import package_launcher  # noqa: E402
 
 CRATE = Path(__file__).resolve().parents[2] / "launcher-rust"
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--revision", type=int, required=True)
@@ -34,7 +30,6 @@ def main():
     if sys.platform != "win32" or args.revision < 1:
         parser.error("Use Windows and a positive localization revision number.")
 
-    args.out.mkdir(parents=True, exist_ok=True)
     metadata = json.loads(subprocess.check_output(
         ["cargo", "metadata", "--locked", "--format-version", "1", "--no-deps"], cwd=CRATE
     ))
@@ -44,15 +39,8 @@ def main():
     subprocess.run(["cargo", "build", "--locked", "--release", "--bin", package["name"]],
                    env=env, cwd=CRATE, check=True)
     exe = Path(metadata["target_directory"]) / "release" / (package["name"] + ".exe")
-
-    archive = args.out / "SanctuaryPort-launcher-zh-CN.zip"
-    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as output:
-        output.write(exe, "SanctuaryPort.exe")
-        output.writestr("update.json", json.dumps({"tag": tag}, ensure_ascii=False) + "\n")
-
-    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-    archive.with_suffix(".zip.sha256").write_bytes(f"{digest}  {archive.name}\n".encode("ascii"))
-    print(f"{tag} {archive} {digest}")
+    archive = package_launcher.build(exe, tag, args.out)
+    print(tag, archive, archive.with_suffix(".zip.sha256").read_text().split()[0])
 
 
 if __name__ == "__main__":
