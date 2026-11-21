@@ -17,12 +17,32 @@
 #include <windows.h>
 #include <tlhelp32.h>
 
+#include "cpk.h"
+
 #define HU_DATA_DIR L"zh-CN"
 
 typedef HANDLE(WINAPI *create_file_t)(LPCWSTR, DWORD, DWORD, LPSECURITY_ATTRIBUTES, DWORD,
                                       DWORD, HANDLE);
+typedef BOOL(WINAPI *read_file_t)(HANDLE, LPVOID, DWORD, LPDWORD, LPOVERLAPPED);
+typedef BOOL(WINAPI *set_pointer_t)(HANDLE, LARGE_INTEGER, PLARGE_INTEGER, DWORD);
 
 static create_file_t real_create_file;
+static read_file_t real_read_file;
+static set_pointer_t real_set_pointer;
+
+/* The credit line the game shows, replaced in the bytes it reads. Both are 36 bytes. */
+static const char CREDIT_OLD[] = "GKinto.com 游戏大桶 汉化制作";
+static const char CREDIT_NEW[] = "bbs.GBTGame.me 海量游戏尽在GBT";
+#define CREDIT_ARCHIVE L"\\enUS_Patch2_7_7.cpk"
+
+/* Handles opened on that archive, with the position the caller is reading at. */
+#define TRACKED 16
+static struct {
+    HANDLE handle;
+    LONGLONG position;
+} tracked[TRACKED];
+static hu_archive *archive;
+static LONG archive_state; /* 0: not looked for, 1: looked for, 2: found */
 
 static WCHAR module_dir[MAX_PATH]; /* ...\bin\ */
 static WCHAR data_dir[MAX_PATH];   /* ...\bin\zh-CN\ */
@@ -58,6 +78,72 @@ static const WCHAR *translated_for(const WCHAR *path) {
     lstrcpyW(candidate, data_dir);
     lstrcatW(candidate, name);
     return GetFileAttributesW(candidate) == INVALID_FILE_ATTRIBUTES ? NULL : candidate;
+}
+
+/* ------------------------------------------------------------ handle tracking */
+
+/* Remembers a handle opened on the credit archive, preparing the rebuilt sectors once. */
+static void track(HANDLE handle, const WCHAR *path) {
+    int slot;
+    if (!path || !ends_with_ci(path, CREDIT_ARCHIVE)) return;
+    if (InterlockedCompareExchange(&archive_state, 1, 0) == 0) {
+        hu_archive *found = hu_cpk_prepare(path, CREDIT_OLD, CREDIT_NEW);
+        archive = found;
+        InterlockedExchange(&archive_state, found ? 2 : 1);
+    }
+    if (!archive) return;
+    for (slot = 0; slot < TRACKED; slot++) {
+        if (tracked[slot].handle == NULL || tracked[slot].handle == INVALID_HANDLE_VALUE) {
+            tracked[slot].handle = handle;
+            tracked[slot].position = 0;
+            return;
+        }
+    }
+}
+
+static int tracked_slot(HANDLE handle) {
+    int slot;
+    for (slot = 0; slot < TRACKED; slot++) {
+        if (tracked[slot].handle == handle) return slot;
+    }
+    return -1;
+}
+
+/* ------------------------------------------------------------------- hooks */
+
+static BOOL WINAPI hook_read_file(HANDLE file, LPVOID buffer, DWORD bytes, LPDWORD read,
+                                  LPOVERLAPPED overlapped) {
+    BOOL ok = real_read_file(file, buffer, bytes, read, overlapped);
+    int slot = tracked_slot(file);
+
+    if (ok && read && *read && slot >= 0 && archive && !overlapped) {
+
+        hu_cpk_patch_read(archive, tracked[slot].position, (unsigned char *)buffer, *read);
+        tracked[slot].position += *read;
+    }
+    return ok;
+}
+
+static BOOL WINAPI hook_set_pointer(HANDLE file, LARGE_INTEGER distance, PLARGE_INTEGER after,
+                                    DWORD method) {
+    BOOL ok = real_set_pointer(file, distance, after, method);
+    int slot = tracked_slot(file);
+    if (ok && slot >= 0) {
+        /* The caller may pass no output pointer, so the new position is computed here. */
+        if (after) {
+            tracked[slot].position = after->QuadPart;
+        } else if (method == FILE_BEGIN) {
+            tracked[slot].position = distance.QuadPart;
+        } else if (method == FILE_CURRENT) {
+            tracked[slot].position += distance.QuadPart;
+        } else if (method == FILE_END) {
+            LARGE_INTEGER size;
+            if (GetFileSizeEx(file, &size)) tracked[slot].position = size.QuadPart + distance.QuadPart;
+        }
+    }
+
+    if (ok && slot >= 0 && after) tracked[slot].position = after->QuadPart;
+    return ok;
 }
 
 /* ------------------------------------------------------------ import patch */
@@ -109,6 +195,8 @@ static void patch_everywhere(void) {
             if (lstrcmpiW(entry.szModule, L"kernelbase.dll") == 0) continue;
             if (lstrcmpiW(entry.szModule, L"ntdll.dll") == 0) continue;
             patch_module(module, "CreateFileW", (void *)&hook_create_file);
+            patch_module(module, "ReadFile", (void *)&hook_read_file);
+            patch_module(module, "SetFilePointerEx", (void *)&hook_set_pointer);
         } while (Module32NextW(snapshot, &entry));
     }
     CloseHandle(snapshot);
@@ -132,6 +220,7 @@ static HANDLE WINAPI hook_create_file(LPCWSTR path, DWORD access, DWORD share,
     translated = path ? translated_for(path) : NULL;
     result = real_create_file(translated ? translated : path, access, share, attributes, creation,
                               flags, template_file);
+    if (result != INVALID_HANDLE_VALUE) track(result, path);
     inside_hook = 0;
     return result;
 }
@@ -152,7 +241,11 @@ void hu_install_hooks(HINSTANCE self) {
 
     real_create_file = (create_file_t)(void (*)(void))GetProcAddress(
         GetModuleHandleW(L"kernel32.dll"), "CreateFileW");
-    if (!real_create_file) return;
+    real_read_file = (read_file_t)(void (*)(void))GetProcAddress(
+        GetModuleHandleW(L"kernel32.dll"), "ReadFile");
+    real_set_pointer = (set_pointer_t)(void (*)(void))GetProcAddress(
+        GetModuleHandleW(L"kernel32.dll"), "SetFilePointerEx");
+    if (!real_create_file || !real_read_file || !real_set_pointer) return;
     /* Only the executable here: inside DllMain the loader lock makes a module snapshot
        unreliable, and the executable is the module whose calls matter first. */
     patch_module(GetModuleHandleW(NULL), "CreateFileW", (void *)&hook_create_file);

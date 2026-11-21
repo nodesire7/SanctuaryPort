@@ -2,8 +2,8 @@
 #
 # Nothing of this fork is merged into upstream. The job checks out this branch for the
 # localization sources, clones the upstream release tag into a throwaway folder, applies the
-# translations there (build/apply.py), builds the launcher, and publishes the package on a
-# `zh-CN-v<version>-zh<revision>` tag. Upstream can move without a single conflict.
+# translations there (build/apply.py), builds the launcher, builds the SDL3 proxy from the
+# release's own SDL3.dll, and publishes everything on a `zh-CN-v<version>-zh<revision>` tag.
 name: localization
 
 on:
@@ -56,11 +56,21 @@ jobs:
           git clone --depth 1 --branch "${{ steps.upstream.outputs.version }}" \
             https://github.com/CaduGimenes/SanctuaryPort.git upstream
           python3 localization/zh-CN/build/apply.py upstream
+      - name: The upstream port package (its SDL3 is the real library)
+        if: steps.published.outputs.skip == 'no'
+        env:
+          VERSION: ${{ steps.upstream.outputs.version }}
+        run: |
+          curl -fsSL --retry 3 -o port.zip \
+            "https://github.com/CaduGimenes/SanctuaryPort/releases/download/$VERSION/SanctuaryPort-windows.zip"
+          mkdir -p real
+          unzip -o -j port.zip 'bin/SDL3.dll' -d real
+          ls -l real
       - name: Toolchain
         if: steps.published.outputs.skip == 'no'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64
+          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64 unzip
           curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
           source "$HOME/.cargo/env"
           (cd upstream/launcher-rust && rustup target add x86_64-pc-windows-gnu)
@@ -75,6 +85,19 @@ jobs:
           CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc \
           CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS="--remap-path-prefix=$HOME=~" \
             cargo build --locked --release --target x86_64-pc-windows-gnu --bin sanctuaryport-launcher
+      - name: Build the SDL3 proxy
+        if: steps.published.outputs.skip == 'no'
+        run: |
+          dll=localization/zh-CN/dll
+          python3 "$dll/exports.py" real/SDL3.dll > exports.json
+          python3 -c "import json;print(len(json.load(open('exports.json'))), 'exports')"
+          mkdir -p proxy dist/bin
+          python3 "$dll/generate.py" exports.json proxy
+          x86_64-w64-mingw32-gcc -shared -O2 -static-libgcc \
+            -finput-charset=UTF-8 -fexec-charset=UTF-8 \
+            -o dist/bin/SDL3.dll \
+            "$dll/hooks.c" "$dll/cpk.c" proxy/sdl3_stubs.S proxy/sdl3_proxy.c proxy/sdl3_proxy.def
+          ls -l dist/bin
       - name: Package
         if: steps.published.outputs.skip == 'no'
         env:
@@ -82,7 +105,8 @@ jobs:
         run: |
           python3 localization/zh-CN/build/package.py \
             --exe upstream/launcher-rust/target/x86_64-pc-windows-gnu/release/sanctuaryport-launcher.exe \
-            --tag "$TAG" --out dist
+            --tag "$TAG" --out dist \
+            --dll dist/bin/SDL3.dll --sdl3 real/SDL3.dll
           ls -l dist
       - uses: actions/upload-artifact@v4
         if: steps.published.outputs.skip == 'no'
