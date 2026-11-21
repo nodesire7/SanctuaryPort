@@ -643,5 +643,22 @@
   "On top of the season's theme, for the next start. They need an offline season; the Altar of Rites and Visions of Enmity are always on with one.": "活动在下次启动时生效，可与赛季主题叠加。须先启用离线赛季，赛季期间始终开启仪式祭坛和敌意视界。",
   "Seasonal heroes offline: the season the game runs. Takes effect on the next start. Off: no season.": "选择离线赛季英雄参加的赛季，下次启动时生效。选择「关闭」可停用赛季。",
   "Unlock all cosmetics and transmogs": "解锁全部外观与幻化",
-  "Every wing, pet, pennant and portrait frame of the game, season rewards included, and every legendary and set item look at the Mystic, in the account saves when the game starts (a backup is kept next to each). Some wings have no icon in the menus but show in game.": "游戏启动时会备份账号存档，并解锁全部翅膀、宠物、旌旗、头像框及赛季外观奖励。秘术师处可使用所有传奇和套装幻化。部分翅膀在菜单中没有图标，装备后可在游戏中看到。"
+  "Every wing, pet, pennant and portrait frame of the game, season rewards included, and every legendary and set item look at the Mystic, in the account saves when the game starts (a backup is kept next to each). Some wings have no icon in the menus but show in game.": "游戏启动时会备份账号存档，并解锁全部翅膀、宠物、旌旗、头像框及赛季外观奖励。秘术师处可使用所有传奇和套装幻化。部分翅膀在菜单中没有图标，装备后可在游戏中看到。",
+  "200 FPS (the game's maximum)": "200 FPS（游戏上限）",
+  "A date is not year-month-day: the portal stays off.": "日期格式不是年-月-日：传送门保持关闭。",
+  "Adds contact shadows in the 3D scene; Low is lighter for integrated GPUs.": "在 3D 场景中加入接触阴影；“低”更省性能，适合核显。",
+  "Closed today: it is outside these days.": "今天关闭：不在活动日期内。",
+  "GTAO (experimental)": "GTAO（实验性）",
+  "High": "高",
+  "Low": "低",
+  "No offline seasons for this game.": "此游戏没有离线赛季。",
+  "Now: Season": "当前：赛季",
+  "Off (game SSAO)": "关闭（使用游戏内置 SSAO）",
+  "Open the portal to Old Tristram": "打开通往旧崔斯特姆的传送门",
+  "Open today.": "今天开启。",
+  "Season events": "赛季活动",
+  "The Darkening of Tristram": "崔斯特姆的黑暗",
+  "The portal is off.": "传送门已关闭。",
+  "Year-month-day, like 2027-01-03. Empty: no limit.": "年-月-日，例如 2027-01-03；留空表示不限。",
+  "days left": "天后结束"
 }
