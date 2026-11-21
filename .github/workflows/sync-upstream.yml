@@ -1,0 +1,46 @@
+# Keeps `main` on top of CaduGimenes/SanctuaryPort.
+#
+# The fork has no upstream work of its own: the localization lives on `zh-CN` and is applied to a
+# throwaway upstream checkout by the localization workflow. `main` therefore holds exactly one
+# commit of its own - this file - and every run replays it on top of the new upstream tip, so
+# nobody ever merges by hand and no file of upstream is ever modified here.
+name: sync-upstream
+
+on:
+  schedule:
+    - cron: '15 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Follow upstream
+        id: follow
+        run: |
+          git config user.name 'upstream sync'
+          git config user.email 'actions@users.noreply.github.com'
+          git fetch --no-tags https://github.com/CaduGimenes/SanctuaryPort.git main
+          echo "upstream: $(git log --oneline -1 FETCH_HEAD)"
+          if git merge-base --is-ancestor FETCH_HEAD HEAD; then
+            echo "main already holds the upstream commit"
+            echo "moved=no" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Only the automation files belong to this branch: replay them on the new upstream tip.
+          git rebase FETCH_HEAD
+          git push --force-with-lease origin main
+          echo "moved=yes" >> "$GITHUB_OUTPUT"
+      - name: Build the localization for the new upstream
+        if: steps.follow.outputs.moved == 'yes'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run localization.yml --ref zh-CN || echo "dispatch failed; the next scheduled localization run picks it up"
