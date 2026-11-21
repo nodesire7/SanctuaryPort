@@ -64,7 +64,8 @@ jobs:
           curl -fsSL --retry 3 -o port.zip \
             "https://github.com/CaduGimenes/SanctuaryPort/releases/download/$VERSION/SanctuaryPort-windows.zip"
           mkdir -p real
-          unzip -o -j port.zip 'bin/SDL3.dll' -d real
+          # The zip carries everything under one top folder: SanctuaryPort-windows/bin/...
+          unzip -o -j port.zip '*/bin/SDL3.dll' -d real
           ls -l real
       - name: Toolchain
         if: steps.published.outputs.skip == 'no'
