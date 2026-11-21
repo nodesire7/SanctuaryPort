@@ -104,9 +104,11 @@ jobs:
         env:
           TAG: ${{ steps.upstream.outputs.tag }}
         run: |
+          # The package carries the whole port, so a player on an older port updates in one
+          # step instead of installing a port package by hand first.
           python3 localization/zh-CN/build/package.py \
             --exe upstream/launcher-rust/target/x86_64-pc-windows-gnu/release/sanctuaryport-launcher.exe \
-            --tag "$TAG" --out dist \
+            --tag "$TAG" --out dist --port port.zip \
             --dll dist/bin/SDL3.dll --sdl3 real/SDL3.dll
           ls -l dist
       - uses: actions/upload-artifact@v4

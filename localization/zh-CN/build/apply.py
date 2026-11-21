@@ -33,6 +33,7 @@ UPDATE_RS = "launcher-rust/src/core/update.rs"
 ROUTES_RS = "launcher-rust/src/core/update_routes.rs"
 APP_RS = "launcher-rust/src/ui/app.rs"
 ADVANCED_RS = "launcher-rust/src/ui/pages/advanced.rs"
+CATALOG_RS = "launcher-rust/src/core/catalog.rs"
 
 
 def read(path: Path):
@@ -213,7 +214,16 @@ def apply_branding(checkout: Path) -> None:
         "the page tail",
     )
     advanced.write_text(page, encoding="utf-8")
-    print(f"branding: {CREDIT_LINE} + forum link on the Advanced page")
+    # Seamless updates: a launcher that never checks on its own leaves the player on an old
+    # build until they go looking. The build turns the check on by default.
+    catalog = checkout / CATALOG_RS
+    defaults = catalog.read_text(encoding="utf-8")
+    defaults = replace_once(defaults, 'app("check_updates", Flag, Bool(false), None),',
+                            'app("check_updates", Flag, Bool(true), None),',
+                            "the update-check default")
+    catalog.write_text(defaults, encoding="utf-8")
+
+    print(f"branding: {CREDIT_LINE} + forum link on the Advanced page, update check on by default")
 
 
 def main() -> None:
