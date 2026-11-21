@@ -7,10 +7,11 @@
 //!
 //! This file is written into the launcher sources at build time (`build/apply.py`); it is not
 //! part of upstream.
-use super::{download, UpdateError, USER_AGENT};
+use super::{download, http_error, release, UpdateError, RELEASES_PAGE, USER_AGENT};
 use std::io::Read;
 use std::path::Path;
 use std::time::{Duration, Instant};
+use crate::core::release::ReleaseId;
 
 const SAMPLE: usize = 256 * 1024;
 const MIRRORS: [&str; 2] = ["https://ghfast.top", "https://gh-proxy.org"];
@@ -83,4 +84,47 @@ pub(super) fn download_zip(
         }
     }
     Err(UpdateError::Http(errors.join("\n")))
+}
+
+const ASSET: &str = "SanctuaryPort-launcher-zh-CN.zip";
+const DOWNLOAD: &str = "https://github.com/nodesire7/SanctuaryPort/releases/download";
+
+/// The latest Windows release, read from the public release page's redirect.
+///
+/// The anonymous API (`RELEASES_API`) is rate limited per address and unreachable from some
+/// networks; `github.com/.../releases/latest` answers with a redirect to the same tag. The
+/// package's checksum is fetched beside the package like a normal release, so a fallback
+/// install is verified the same way.
+pub(super) fn latest_release() -> Result<release::Release, UpdateError> {
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .max_redirects(0)
+        .timeout_global(Some(Duration::from_secs(12)))
+        .build()
+        .into();
+    let response = agent
+        .head(RELEASES_PAGE)
+        .header("User-Agent", USER_AGENT)
+        .call()
+        .map_err(http_error)?;
+    let page = response
+        .headers()
+        .get("Location")
+        .and_then(|value| value.to_str().ok())
+        .ok_or_else(|| UpdateError::Http("GitHub did not name a latest release".into()))?;
+    let tag = page.rsplit('/').next().unwrap_or_default();
+    if !tag.starts_with("zh-CN-v")
+        || !tag
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'.' || byte == b'-')
+    {
+        return Err(UpdateError::Http(format!("unexpected release tag: {tag}")));
+    }
+    let id = ReleaseId::parse(tag, false)
+        .ok_or_else(|| UpdateError::Http(format!("unreadable release tag: {tag}")))?;
+    Ok(release::Release {
+        id,
+        published: String::new(),
+        url: format!("{DOWNLOAD}/{tag}/{ASSET}"),
+        page: page.to_owned(),
+    })
 }

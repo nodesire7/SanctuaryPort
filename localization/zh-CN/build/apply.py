@@ -106,10 +106,63 @@ def apply_update(checkout: Path) -> None:
                     "expected.as_deref(), report).map_err(text)?;")
     text = replace_once(text, download_call, patched_call, "the Windows download")
 
+    # When the anonymous API answers nothing usable (rate limited, blocked), the public release
+    # page still names the tag: ask it instead of leaving the player without updates.
+    listing = '''/// One GET of the list (Accept `application/vnd.github+json`, global timeout 15 s), then `parse_releases`.
+pub fn list_releases(windows: bool) -> Result<Vec<release::Release>, UpdateError> {
+    // SANCTUARY_RELEASES_API: another list (a test server), to try an update before publishing it.
+    let api = std::env::var("SANCTUARY_RELEASES_API").unwrap_or_else(|_| RELEASES_API.to_string());
+    let (mut reader, _) = get(
+        &api,
+        Some("application/vnd.github+json"),
+        Some(Duration::from_secs(15)),
+    )?;
+    let mut text = String::new();
+    reader.read_to_string(&mut text)?;
+    let json = serde_json::from_str(&text).map_err(|e| UpdateError::Json(e.to_string()))?;
+    release::parse_releases(&json, windows)
+}'''
+    listing_patched = '''/// One GET of the list (Accept `application/vnd.github+json`, global timeout 15 s), then `parse_releases`.
+pub fn list_releases(windows: bool) -> Result<Vec<release::Release>, UpdateError> {
+    // SANCTUARY_RELEASES_API: another list (a test server), to try an update before publishing it.
+    let api = std::env::var("SANCTUARY_RELEASES_API").unwrap_or_else(|_| RELEASES_API.to_string());
+    match list_from(&api, windows) {
+        Ok(releases) => Ok(releases),
+        // The anonymous API is rate limited per address and blocked on some networks; the
+        // release page's redirect names the same tag, and the package still has to match the
+        // checksum published beside it.
+        Err(api_error) if windows && api == RELEASES_API => routes::latest_release()
+            .map(|latest| vec![latest])
+            .map_err(|web_error| UpdateError::Http(format!("{api_error} / {web_error}"))),
+        Err(error) => Err(error),
+    }
+}
+
+fn list_from(api: &str, windows: bool) -> Result<Vec<release::Release>, UpdateError> {
+    let (mut reader, _) = get(
+        api,
+        Some("application/vnd.github+json"),
+        Some(Duration::from_secs(15)),
+    )?;
+    let mut text = String::new();
+    reader.read_to_string(&mut text)?;
+    let json = serde_json::from_str(&text).map_err(|e| UpdateError::Json(e.to_string()))?;
+    release::parse_releases(&json, windows)
+}'''
+    text = replace_once(text, listing, listing_patched, "the release listing")
+
     source.write_text(text, encoding="utf-8")
     (checkout / ROUTES_RS).write_text((OVERLAY / "update_routes.rs").read_text(encoding="utf-8"),
                                       encoding="utf-8")
-    print(f"updater: releases of {FORK_REPO}, downloads through ghfast.top / gh-proxy.org")
+
+    # Crash reports belong to the project that ships this build.
+    report = checkout / "launcher-rust/src/core/crash_report.rs"
+    reports = report.read_text(encoding="utf-8")
+    reports = replace_once(reports, f'github.com/{UPSTREAM_REPO}/issues/new',
+                           f'github.com/{FORK_REPO}/issues/new', "the issue link")
+    report.write_text(reports, encoding="utf-8")
+
+    print(f"updater: releases of {FORK_REPO}, mirrors + release page fallback, issue link moved")
 
 
 def main() -> None:
