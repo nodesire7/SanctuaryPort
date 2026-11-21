@@ -55,12 +55,16 @@ Frame rate: the game paces itself. After each frame (1.47 eboot 0xbef87) it slee
 `[obj+0xce0]` microseconds have passed since the last one; 0xbda8a sets it from
 `sceVideoOutGetResolutionStatus`'s refresh rate (16683 for 59.94 Hz, 41701 for 23.98, 20000 for
 50), so a faster vblank alone stays at 60. The "Frame Limiter" patches (both executables) replace
-16683 with 33367 (30), 8341 (120) or 0 (unlimited); the launcher's Graphics > Frame rate
+16683 with 33367 (30), 8341 (120) or 0 (200, below); the launcher's Graphics > Frame rate
 (`sanctuary.ini frame_rate`, run.py) picks one, and above 60 run.py sets a 480 Hz vblank and the
-present limit (`SANCTUARY_FPS_LIMIT`). The game's clock follows real time: the same 99 s route in
-the Royal Crypt gave the same `time_played` and the same walking distance at 60, ~100 and ~114 FPS,
-with no audio starvation. A Radeon 760M reaches about 85 FPS in New Tristram and 100-114 in the
-Royal Crypt (the port's recording thread is then the limit).
+present limit (`SANCTUARY_FPS_LIMIT`). 200 FPS gets 480, the vblank's own rate: without a limit
+a frame waits for the next vblank tick, with one it is shown when it arrives, as at 60 and 120.
+That limit is not the frame rate, so the `Stall:` lines of `SANCTUARY_FRAME_STATS=1` keep the
+40 ms threshold they have without a limit (`SANCTUARY_STALL_MS` sets another). The game's clock
+follows real time: the same 99 s route in the Royal Crypt gave the same `time_played` and the
+same walking distance at 60, ~100 and ~114 FPS, with no audio starvation. A Radeon 760M reaches
+about 85 FPS in New Tristram and 100-114 in the Royal Crypt (the port's recording thread is then
+the limit).
 
 Ultrawide: right after the size, the renderer setup stores the camera's aspect ratio, 16/9 as a
 float in `[obj+0x54]` (`movl $0x3fe38e39`, imm32 at 0x4bb218). The 2560x1080, 3440x1440,
@@ -77,6 +81,50 @@ at 720p, 800 or 900 lines the HUD bars and icons stayed and every text (menus, t
 names) was gone, without any error (PR #15). The resolution patches under 1080 lines turn the `ja`
 after `cmp $1079` into `jmp`, so the game uses its 1080p fonts and scales them like the rest of the
 UI. Found by comparing frame captures: the font shaders (vs/ps f405edba/0ed7c8fb) were never drawn.
+
+Frame rate 200 FPS, the top choice (`frame_rate=0`, the value of the former Unlimited, so existing
+sanctuary.ini files keep it): with the "Frame Limiter - Unlimited" patch the limiter above does not
+wait, but the game then stops at about 143 FPS because it has a second limiter. Its end-of-frame
+code (eboot 0x234190) calls 0x2354f0 with the PC game's "Max Foreground FPS" setting
+(`MaxForegroundFPS`, `[settings+0x78]`, default 150, range 1..200) unless `LimitForegroundFPS`
+(`[settings+0x74]`, default 1) is off. It sleeps 1 ms at a time until `(n + 2000) / (2 * n)` whole
+milliseconds have passed since its last frame: 7 ms for 150. At 30, 60 and 120 FPS the first
+limiter has waited longer and this one returns at once (stack samples on the title screen without
+a wait in the first: the main render thread is in that sleep loop 95% of the time, and the game's
+frame is 7.000 ms). So run.py adds "Max Foreground FPS - 200" with that patch, always and only
+then: the call that reads the setting (0x2341fb) becomes `mov eax, 200`, the setting's maximum, so
+the limit is 5 ms: up to 200 FPS, 191 to 196 measured on the title screen (the limiter wakes a
+little after each whole millisecond; frame pacing median 5.2 ms). The value read is replaced, not
+the default, because a saved preference is applied after the defaults. The log and the in-game
+menu name the result "200 FPS"; `frame_rate=200` is read as 0. One signature covers every
+executable checked with `scripts/patches.py`, matching once in each: 1.47 and 1.46 (write at
+0x2341fb), CUSA00243's 1.25 update (0x22d27b) and the 1.00 disc executable of CUSA00434 and
+CUSA00243 (0x1a56e7, where the getter reads `[settings+0x64]`); the call target and the je
+distance are left open, and the limiter's arithmetic must match too. On an eboot.bin where it does
+not, the entry is skipped, the game's own 150 still holds the game, and they say `about 143 FPS
+(Max Foreground FPS - 200 not found in this eboot.bin)`. 200 is
+as far as it goes on purpose: it is the game's own maximum, and above it cloth runs faster than
+real time. What depends on the frame rate above the game's own 150, from the code (not measured
+unless it says so):
+
+| What | Where | At 200 FPS | Above 200 FPS |
+|---|---|---|---|
+| Cloth: its time step is the frame time, smoothed, with a floor of 5 ms | 0x37980 (solver 0x3bae0) | about real time (a frame the millisecond clock cuts short of 5 ms is stepped as 5: marginally fast) | **runs faster than real time**: 1.25 times at 250 FPS, 2.4 times at 480. This is why the cap is 200 |
+| Cloth damping is applied per step, not per second | 0x3bae0 | 3.3 times the damping per second of 60 FPS (2.4 times at 143 already): stiffer cloth | more |
+| Game time advances in units of 1/3000 s | frame function 0x2abc0, clock 0x54ae30 | a frame is 15 units; one unit of jitter is 7% | 8% at 240, 16% at 480; above 3000 FPS a frame's update is skipped |
+| Game time is a 32-bit float of seconds, reset per game | `[clock+0x60]`, 0x277b0 | after 2 h in one game a frame's step is known to 0.5 ms (10% of a frame, 7% at 143 FPS), after 9 h to 2 ms (39%, 28% at 143) | worse in proportion |
+| Two blends with a fixed factor per update | 0x2a4550 (`x += (0 - x) * 0.2`), 0x2a4380 (`x += (target - x) * 0.1`) | settle 3.3 times as fast as at 60 FPS; what they drive is not known | faster |
+| Dynamic resolution works on a 60 FPS budget (GPU time over 15.25 ms lowers the scale) | 0x26e80 | cannot help hold 200 FPS; it only acts below 66 | same |
+| Characters between ticks (the #24 defect) | 0x256fc0 | uneven steps without its fix, as at every rate above 60 (measured at 250 game frames per second: 0.44) | same |
+| Physics steps once per frame with the frame's time | 0x3d2700 | not known | not known |
+| Interface animation, input repeat, camera smoothing, audio | not read | not known | not known |
+| Work: 40% more frames than at 143 FPS | | more CPU and GPU load, heat and power | without any limiter the title screen alone took 3.6 CPU cores (measured) |
+
+None of these is a fault of the game's logic, which runs in 60 Hz ticks from the clock. With
+V-Sync on, the game's wait for the GPU after each frame includes the display's vsync (the note on
+`SANCTUARY_VSYNC` in `scripts/game_profiles.py`), so the display sets the pace and 200 can only
+differ from the former Unlimited on a display faster than 143 Hz; that combination has not been
+measured.
 
 Below the window, FSR 1 (`fsr1=1`, launcher Graphics > Upscaling, in-game Image) upscales the
 picture and RCAS sharpens it; a render resolution under 1080p then opens a 1080p window.
@@ -136,7 +184,15 @@ anti-aliasing, in-game Image) runs on the finished frame at its copy to the disp
   timestamps written by the GPU and copied to guest memory once it has passed them
   (`vk_guest_clock.cpp`): the scene stays at 70% there (32-38 FPS) and at 100% at 1080p (60 FPS).
   `SANCTUARY_GPU_CLOCK=record` brings back the old values. The game's floor is 70%; its post
-  passes always run at the full size.
+  passes always run at the full size. Graphics > Dynamic resolution off (`sanctuary.ini
+  dynamic_resolution=0`) applies the "Dynamic Resolution - Off" patch: the scaler's update (1.47
+  eboot 0x26e80) has a branch of its own that stores scale 1.0, and the patch always takes it. An
+  executable the patch's signature is not found in (the US 1.00 one was not examined) gets
+  `SANCTUARY_DYNRES=fixed` instead, as every one did before: the GPU clock the game reads runs 64
+  times slower (`guest_clock_scale.h`), so the game finds its GPU time under budget (scenes below
+  100% were still recorded that way; why is not established). Set by the caller,
+  `SANCTUARY_DYNRES=fixed` chooses the clock method without the patch, and any other value leaves
+  dynamic resolution on.
 - Frame generation (experimental, `frame_generation=1`, read at start): `vk_frame_generation.cpp`.
   Per display buffer (the guest flips on another thread, sometimes after the next frame started):
   depth (R32F copy, `depth_copy.comp`), motion vectors, and the display buffer before the HUD's
@@ -175,6 +231,47 @@ new player presses the bottom face button and gets hero creation or selection.
 copy, where FSR 3 would run: Diablo III's A2B10G10R10 frame before the HUD, so the HUD stays sharp.
 Two compute passes (frame to an RGBA16F copy with the filter, then back keeping the frame's alpha);
 off while FSR 3 is on. Frames in another format (menus) are left alone.
+
+## MSAA samples
+
+The game asks for MSAA level 4 in both PS4 modes (display-mode description, eboot 0xbe420 and
+0xbe4fe). Its render-target set-up (0xbf300) makes that 4 coverage samples with 2 colour and 2
+depth fragments (EQAA); the GPU core keeps the fragments, so the scene has 2 samples. The game then
+copies the scene for its post passes ("PostFX Upscale", also the distortion copy) with one texel
+fetch of sample 0, so the second sample never reaches the picture. The PC version resolves the same
+targets with `ResolveSubresource`.
+
+`msaa` in sanctuary.ini (launcher Graphics > MSAA samples; empty by default, the game's own) picks:
+
+- `2`: the game's 2 samples; `4`: patch "Game MSAA - 4x" (level 16: 4 colour and depth
+  fragments). run.py adds the patch; another executable skips it and keeps 2 samples. These are
+  the PC version's 2X and 4X; its 8X is 4 samples at the driver's highest quality level.
+- With any of them run.py sets `SANCTUARY_MSAA_RESOLVE=1`: a multisampled colour image a shader
+  samples is read from a copy whose samples all hold their mean (`TextureCache::MsaaAverage`, once
+  per pass). Depth keeps its samples: the SSAO, the depth copy and GTAO read sample 0 of it.
+- With `SANCTUARY_NO_MSAA` (the default on AMD's and Intel's Windows drivers) the images are
+  single-sampled and the choice changes nothing.
+
+There is no "Q" mode (more coverage samples than colour samples, AMD EQAA or NVIDIA CSAA):
+Vulkan has no portable way to resolve with coverage samples.
+
+## GTAO
+
+`gtao=low` or `gtao=high` in sanctuary.ini (`SANCTUARY_GTAO=off|low|high`, launcher Graphics >
+Ambient occlusion, in-game menu Image; off by default) runs four compute passes
+(`host_shaders/gtao_*.comp`, `renderer_vulkan/vk_gtao.cpp`: depth pyramid prefilter,
+visibility-bitmask GTAO evaluation, plane-aware a-trous denoise, and full-edge store) right
+after Diablo III's SSAO upscale draw writes the full-size R8 visibility target. `low` uses 3×4 taps
+and a 3×3 denoiser; `high` uses 8×8 taps and a 5×5 denoiser. The pass is matched structurally by
+attachments and sampled inputs (no hardcoded shader hashes) and takes the projection from
+`CameraMotion::OnObjectBlock`; the stock SSAO draw completes first and is kept untouched whenever
+any input, viewport, projection, or device limit does not match.
+
+The store pass writes GTAO visibility straight to the stock SSAO output without applying Diablo
+III's 64x64 screen-edge vignette mask: `gtao_evaluate.comp` stops rays at the viewport edges rather
+than clamping depth, so it does not create the border halos the stock SSAO mask hid, and edge
+normals/slopes in the evaluate and denoise passes use inward differences on the 1-px border.
+Ambient occlusion off keeps the game's SSAO with its own fade.
 
 ## Xbox button icons
 
@@ -250,6 +347,7 @@ America) whose pack is missing with the first one the dump has, Portuguese first
 | `SANCTUARY_VIRTUAL_PAD=1` | attach an SDL virtual gamepad (scripted runs that need a connected controller) |
 | `SANCTUARY_DEBUGGABLE=1` | let other processes read the game's memory (`/proc/PID/mem`, gdb without root) |
 | `SANCTUARY_RECORD_THREADS=1` | report (with a backtrace) any use of the Vulkan command recording from a thread that does not own it at that moment |
+| `SANCTUARY_GTAO_TRACE=1` | log GTAO match/fallback state on Diablo III's full-size R8 SSAO upscale pass |
 
 The guest image base is `0x800000000`; shadPS4 loads at `0x400000`, so its addresses are image
 offsets + `0x400000`.

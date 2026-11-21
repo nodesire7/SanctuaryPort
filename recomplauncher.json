@@ -5,8 +5,8 @@
   "repo": "nodesire7/SanctuaryPort",
   "game": {
     "kind": "folder",
-    "label": "您提供的《暗黑破坏神III》游戏目录，目录内含 eboot.bin。",
-    "check": { "file": "eboot.bin" },
+    "label": "您从自有 PS4 提取的《暗黑破坏神III》游戏目录，内含 eboot.bin（CUSA00243 / CUSA00242 / CUSA00433 / CUSA00434）。",
+    "check": { "file": "eboot.bin", "ids": ["CUSA00243", "CUSA00242", "CUSA00433", "CUSA00434"] },
     "update": {
       "into": "update",
       "label": "游戏的 1.47 更新目录。",

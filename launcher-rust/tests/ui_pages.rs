@@ -54,6 +54,103 @@ fn graphics_rows_change_the_right_keys() {
 }
 
 #[test]
+fn the_smooth_motion_switch_picks_its_patch() {
+    // GitHub #24: the experimental patch is ticked on the Graphics page, below the frame rate.
+    use sanctuaryport_launcher::ui::pages::graphics::SMOOTH_PATCH;
+    let dir = tempfile::tempdir().unwrap();
+    let dump = common::dump_with_patches(dir.path());
+    std::fs::write(
+        dir.path().join("patches").join("Diablo_III.xml"),
+        format!(
+            "<Patch><TitleID><ID>CUSA00243</ID></TitleID>\
+             <Metadata Name=\"{SMOOTH_PATCH}\" AppVer=\"01.47\" isEnabled=\"false\"><PatchList/></Metadata></Patch>"
+        ),
+    )
+    .unwrap();
+    let mut state = state(dir.path());
+    common::browsed(&mut state, "game_dir", &dump);
+    open(&mut state, Page::Graphics);
+    assert!(!state.patches.chosen.contains(SMOOTH_PATCH));
+    let clicked: Vec<Message> = {
+        let mut ui = iced_test::simulator::Simulator::with_size(
+            iced::Settings::default(),
+            iced::Size::new(1280.0, 4000.0),
+            app::view(&state),
+        );
+        ui.click("Smooth character motion above 60 FPS (experimental)  ↻").unwrap();
+        ui.into_messages().collect()
+    };
+    for message in clicked {
+        let _ = app::update(&mut state, message);
+    }
+    assert!(state.patches.chosen.contains(SMOOTH_PATCH));
+    let env = game_environment(
+        state.store.app(),
+        &state.paths,
+        "en",
+        &indexmap::IndexMap::new(),
+        true,
+    );
+    assert!(env["SANCTUARY_PATCHES"].split(';').any(|name| name == SMOOTH_PATCH));
+}
+
+#[test]
+fn graphics_more_options_start_closed() {
+    use sanctuaryport_launcher::ui::pages::graphics::MORE_OPTIONS;
+    let dir = tempfile::tempdir().unwrap();
+    let mut state = state(dir.path());
+    let _ = app::update(&mut state, Message::ShowPage(Page::Graphics));
+    assert!(!state.open_sections.contains(&MORE_OPTIONS));
+    let _ = app::update(
+        &mut state,
+        Message::Tick(iced::time::Instant::now() + std::time::Duration::from_secs(1)),
+    );
+    let mut ui = iced_test::simulator::Simulator::with_size(
+        iced::Settings::default(),
+        iced::Size::new(1280.0, 4000.0),
+        app::view(&state),
+    );
+    assert!(ui.find("Dynamic resolution  ↻").is_err());
+    ui.click("More options").unwrap();
+    let clicked: Vec<Message> = ui.into_messages().collect();
+    for message in clicked {
+        let _ = app::update(&mut state, message);
+    }
+    assert!(state.open_sections.contains(&MORE_OPTIONS));
+    page_has(&state, &["Dynamic resolution  ↻", "FXAA", "Anisotropic filtering  ↻"]);
+}
+
+#[test]
+fn the_shader_warm_up_switch_reaches_the_game() {
+    // GitHub #63: Advanced > Troubleshooting turns the background shader warm-up off.
+    let dir = tempfile::tempdir().unwrap();
+    let mut state = state(dir.path());
+    open(&mut state, Page::Advanced);
+    assert!(state.store.flag("background_warmup"));
+    let clicked: Vec<Message> = {
+        let mut ui = iced_test::simulator::Simulator::with_size(
+            iced::Settings::default(),
+            iced::Size::new(1280.0, 4000.0),
+            app::view(&state),
+        );
+        ui.click("Load shaders while playing").unwrap();
+        ui.into_messages().collect()
+    };
+    for message in clicked {
+        let _ = app::update(&mut state, message);
+    }
+    assert!(!state.store.flag("background_warmup"));
+    let env = game_environment(
+        state.store.app(),
+        &state.paths,
+        "en",
+        &indexmap::IndexMap::new(),
+        true,
+    );
+    assert_eq!(env["SANCTUARY_BACKGROUND_WARMUP"], "0");
+}
+
+#[test]
 fn a_stored_string_zero_shows_checked_like_the_game_gets_it() {
     // Python truthiness: "0" is a non-empty string, so the game gets SANCTUARY_HDR=1, and the box
     // shows what the game gets.
@@ -152,7 +249,7 @@ fn every_row_control_ends_on_the_same_right_edge() {
             tr("Upscaling"),
             format!("{}  ↻", tr("Anisotropic filtering")),
             tr("Show performance overlay"),
-            tr("Screenshot key: F12"),
+            format!("{}  ↻", tr("Frame rate")),
         ];
         let mut ui = settled(&mut state, Page::Graphics, 1280.0, 800.0);
         let edges: Vec<(String, f32)> = labels
@@ -299,14 +396,15 @@ fn graphics_page_offers_the_choice() {
     assert_eq!(state.monitor_pairs.len(), 1);
     assert_eq!(state.store.text("monitor"), "");
 
-    // The screenshots button opens <saves>/screenshots, made first when missing. The page is
-    // taller than the default window since the Effects section (the drawer scrolls).
+    // The screenshots button (Advanced > Files) opens <saves>/screenshots, made first when
+    // missing. The page is taller than the default window (the drawer scrolls).
+    open(&mut state, Page::Advanced);
     let mut ui = iced_test::simulator::Simulator::with_size(
         iced::Settings::default(),
         iced::Size::new(1280.0, 4000.0),
         app::view(&state),
     );
-    ui.click("Open the screenshots folder").unwrap();
+    ui.click("Screenshots").unwrap();
     let sent: Vec<Message> = ui.into_messages().collect();
     let expected = state.paths.user_dir("").join("screenshots");
     assert!(matches!(sent.as_slice(), [Message::OpenFolder(path)] if *path == expected));
@@ -333,13 +431,13 @@ fn values(pairs: &[(String, String)]) -> Vec<&str> {
 
 #[test]
 fn aspect_follows_and_filters_the_render_resolution() {
-    // SanctuaryPort: Diablo III's resolution patches: 16:9, and ultrawide 21:9 / 32:9 with the
-    // camera's aspect ratio.
+    // SanctuaryPort: Diablo III's resolution patches: 16:9, 16:10 (Steam Deck, #46), and ultrawide
+    // 21:9 / 32:9 with the camera's aspect ratio.
     let dir = tempfile::tempdir().unwrap();
     let mut state = state(dir.path());
     assert_eq!(state.store.text("render_resolution"), "native");
     assert_eq!(state.aspect, "16:9");
-    assert_eq!(performance::aspect_options(&state), ["16:9", "21:9", "32:9"]);
+    assert_eq!(performance::aspect_options(&state), ["16:9", "16:10", "21:9", "32:9"]);
     assert_eq!(
         values(&performance::aspect_resolution_options(&state)),
         ["native", "480p", "720p", "900p", "1440p", "1800p", "4K"]
@@ -351,6 +449,12 @@ fn aspect_follows_and_filters_the_render_resolution() {
     assert_eq!(
         values(&performance::aspect_resolution_options(&state)),
         ["2560x1080", "3440x1440", "3840x1600"]
+    );
+    set(&mut state, "render_resolution", "1280x800");
+    assert_eq!(state.aspect, "16:10");
+    assert_eq!(
+        values(&performance::aspect_resolution_options(&state)),
+        ["1280x800", "1920x1200", "2560x1600"]
     );
 }
 
@@ -546,9 +650,12 @@ fn anti_aliasing_section_says_what_the_choices_do() {
         &[
             "Now: FSR 3 smooths edges.",
             graphics::FXAA_OFF_HINT,
-            "Turn Sharpening on to use this.",
         ],
     );
+    // The strength only while Sharpening is on.
+    let mut ui = settled(&mut state, Page::Graphics, 1280.0, 4000.0);
+    assert!(ui.find("Sharpening strength").is_err());
+    drop(ui);
     let _ = app::update(&mut state, Message::Upscaling("off".into()));
     assert_eq!(state.store.text("temporal_aa"), "off");
     assert!(!state.store.flag("fsr1"));
@@ -1880,11 +1987,12 @@ fn performance_page_has_the_shader_cache_rows() {
     let dir = tempfile::tempdir().unwrap();
     let mut state = state(dir.path());
     state.lang = "en".into();
-    open(&mut state, Page::Graphics);
-    page_has(&state, &["Shader cache", "Delete shader cache"]);
+    // Advanced > Troubleshooting.
+    open(&mut state, Page::Advanced);
+    page_has(&state, &["Shader cache", "Delete shader cache", "Load shaders while playing"]);
     // SanctuaryPort: the cache switches the runtime does not read are not offered.
-    let mut ui = settled(&mut state, Page::Graphics, 1280.0, 4000.0);
-    assert!(ui.find("Reuse compiled shaders from disk  ·  restart").is_err());
+    let mut ui = settled(&mut state, Page::Advanced, 1280.0, 4000.0);
+    assert!(ui.find("Reuse compiled shaders from disk  ↻").is_err());
     ui.click("Delete shader cache").unwrap();
     let emitted: Vec<Message> = ui.into_messages().collect();
     // The button asks the same question as the Advanced page's.
@@ -2026,10 +2134,10 @@ fn the_files_buttons_share_one_row_at_its_end() {
         let labels = [
             tr(lang, "Port folder"),
             "sanctuary.ini".to_string(),
-            tr(lang, "Last start log"),
+            tr(lang, "Screenshots"),
         ];
         let mut ui = settled(&mut state, Page::Advanced, 1280.0, 4000.0);
-        let scale = control(&mut ui, &tr(lang, "GUI Scale"));
+        let scale = control(&mut ui, &tr(lang, "Launcher size"));
         let files = control(&mut ui, advanced::FILES_ROW);
         let shown: Vec<iced::Rectangle> = labels
             .iter()

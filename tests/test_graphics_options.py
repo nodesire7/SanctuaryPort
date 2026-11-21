@@ -246,14 +246,84 @@ class FrameLimiterTest(unittest.TestCase):
         self.assertEqual(g.limiter_environment(['Frame Limiter - 30 FPS']), {'SANCTUARY_FPS_LIMIT': '0'})
         self.assertEqual(g.limiter_environment(['Resolution Patch - 4K', 'Frame Limiter - 120 FPS']),
                          {'SANCTUARY_VBLANK_HZ': '0', 'SANCTUARY_FPS_LIMIT': '120'})
+        # 200 FPS (Frame Limiter - Unlimited): immediate flips too, up to one per 480 Hz tick as before (0 would wait for the tick).
         self.assertEqual(g.limiter_environment(['Frame Limiter - Unlimited']),
-                         {'SANCTUARY_VBLANK_HZ': '0', 'SANCTUARY_FPS_LIMIT': '0'})
+                         {'SANCTUARY_VBLANK_HZ': '0', 'SANCTUARY_FPS_LIMIT': '480'})
 
     def test_each_choice_has_a_patch_for_both_executables(self):
         xml = (Path(__file__).resolve().parent.parent / 'patches' / 'Diablo_III.xml').read_text(encoding='utf-8')
         for rate in ('30', '120', '0'):
             name = g.limiter_patch(rate)
             self.assertEqual(xml.count(f'Name="{name}"'), 2, name)
+
+    def test_200_fps_is_the_limiter_that_does_not_wait_plus_the_raised_foreground_cap(self):
+        cap, top = g.FOREGROUND_CAP_PATCH, ['Event: Pandemonium', g.limiter_patch('0')]
+        self.assertEqual(g.foreground_cap_names(top), top + [cap])
+        self.assertEqual(g.foreground_cap_names(top + [cap]), top + [cap])
+        # At 30, 60 and 120 FPS the first limiter waits longer: nothing to raise, nothing applied,
+        # also when the list (SANCTUARY_PATCHES) names it.
+        for rate in ('30', '60', '120'):
+            names = [n for n in [g.limiter_patch(rate)] if n]
+            self.assertEqual(g.foreground_cap_names(names + [cap]), names, rate)
+        # Other patches chosen for the same start stay, whatever comes after the limiter.
+        self.assertEqual(g.foreground_cap_names(top + ['Offline Seasons - Season 30']),
+                         top + ['Offline Seasons - Season 30', cap])
+        # The stored value stays 0 (the former Unlimited); 200, the name the launcher shows, reads
+        # as 0 (--set frame_rate=200). Either way 200 FPS has the cap.
+        for ini in ({'frame_rate': '0'}, {'frame_rate': '200'}):
+            self.assertEqual(g.frame_rate(ini), '0', ini)
+            self.assertEqual(g.foreground_cap_names([g.limiter_patch(g.frame_rate(ini))]), [top[1], cap], ini)
+        self.assertEqual(g.frame_rate({'frame_rate': '201'}), '60')  # not a choice: the default
+        xml = (Path(__file__).resolve().parent.parent / 'patches' / 'Diablo_III.xml').read_text(encoding='utf-8')
+        self.assertEqual(xml.count(f'Name="{cap}"'), 1)
+
+    def test_the_log_and_the_menu_name_the_rate_that_was_applied(self):
+        cap = g.FOREGROUND_CAP_PATCH
+        self.assertEqual(g.frame_rate_label([]), '60 FPS')
+        self.assertEqual(g.frame_rate_label(['Frame Limiter - 30 FPS']), '30 FPS')
+        self.assertEqual(g.frame_rate_label(['Resolution Patch - 4K', 'Frame Limiter - 120 FPS']), '120 FPS')
+        self.assertEqual(g.frame_rate_label(['Frame Limiter - Unlimited', cap]), '200 FPS')
+        # An eboot.bin without the cap's signature: the game's own 150 setting still limits it.
+        self.assertEqual(g.frame_rate_label(['Frame Limiter - Unlimited']),
+                         f'about 143 FPS ({cap} not found in this eboot.bin)')
+
+
+class FixedScaleTest(unittest.TestCase):
+    """Diablo III's Graphics > Dynamic resolution off: the game's own fixed 100% scale (patches/Diablo_III.xml)."""
+
+    def test_the_slowed_gpu_clock_is_the_fallback_for_a_skipped_patch(self):
+        self.assertIsNone(g.fixed_scale_fallback({'applied': ['Frame Limiter - 120 FPS', g.FIXED_SCALE_PATCH],
+                                                  'skipped': {}}))
+        self.assertEqual(g.fixed_scale_fallback({'applied': ['Frame Limiter - 120 FPS'],
+                                                 'skipped': {g.FIXED_SCALE_PATCH: 'signature not found'}}),
+                         'signature not found')
+        self.assertEqual(g.fixed_scale_fallback(None), 'not applied')  # no report of the start
+
+
+class GameMsaaTest(unittest.TestCase):
+    """Diablo III's Graphics > Game MSAA: the scene's sample count (patches/Diablo_III.xml) and the
+    averaging of its samples (SANCTUARY_MSAA_RESOLVE)."""
+
+    def test_choice_patch_and_environment(self):
+        self.assertEqual(g.msaa({}), '')
+        for value in ('2', '4'):
+            self.assertEqual(g.msaa({'msaa': value}), value)
+        self.assertEqual(g.msaa({'msaa': '8'}), '')
+        self.assertEqual(g.msaa({'msaa': '16'}), '')
+        self.assertEqual(g.msaa({'msaa': 'on'}), '')
+        # The game's own 2 samples need no patch; 4 does.
+        self.assertIsNone(g.msaa_patch(''))
+        self.assertIsNone(g.msaa_patch('2'))
+        self.assertEqual(g.msaa_patch('4'), 'Game MSAA - 4x')
+        # Off by default: the game's own copy of its scene stays as it is.
+        self.assertEqual(g.msaa_environment(''), {})
+        for value in ('2', '4'):
+            self.assertEqual(g.msaa_environment(value), {'SANCTUARY_MSAA_RESOLVE': '1'})
+
+    def test_each_count_has_one_patch(self):
+        xml = (Path(__file__).resolve().parent.parent / 'patches' / 'Diablo_III.xml').read_text(encoding='utf-8')
+        for value in ('4',):
+            self.assertEqual(xml.count(f'Name="{g.msaa_patch(value)}"'), 1, value)
 
 
 class WindowSizeTest(unittest.TestCase):

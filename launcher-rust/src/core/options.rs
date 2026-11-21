@@ -7,8 +7,15 @@ pub const RESOLUTION_PATCH_PREFIX: &str = "Resolution Patch";
 pub const FRAME_RATE_PATCH_PREFIX: &str = "Frame Rate Patch";
 /// SanctuaryPort: Diablo III's own frame limiter (Graphics > Frame rate, run.py).
 pub const FRAME_LIMITER_PATCH_PREFIX: &str = "Frame Limiter";
+/// SanctuaryPort: Diablo III's own fixed scene scale (Graphics > Dynamic resolution off, run.py).
+pub const FIXED_SCALE_PATCH: &str = "Dynamic Resolution - Off";
+/// SanctuaryPort: Diablo III's scene samples (Graphics > MSAA samples, run.py).
+pub const GAME_MSAA_PATCH_PREFIX: &str = "Game MSAA";
 /// The fix a resolution patch replaces: both resize the video arena.
 pub const TEXTURE_FIX_PATCH: &str = "Bug Fix - Texture Corruption Fix";
+/// SanctuaryPort: Diablo III's second frame limiter raised to its maximum, which run.py adds for
+/// Graphics > Frame rate 200 FPS.
+pub const FOREGROUND_CAP_PATCH: &str = "Max Foreground FPS - 200";
 
 /// One entry of a choice list: the stored value and its labels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,6 +72,17 @@ pub static ANISOTROPY: &[Choice] = &[
     c("16", "16x"),
 ];
 
+/// SanctuaryPort: Diablo III's scene samples (`msaa`, run.py): the game's own picks no patch and
+/// leaves the game's copy of its scene, which reads one sample, as it is; a count also averages them.
+pub static GAME_MSAA: &[Choice] = &[c("", "The game's own"), c("2", "2x"), c("4", "4x")];
+
+/// SanctuaryPort: optional GTAO replacement for Diablo III's SSAO upscale pass (`gtao`).
+pub static GTAO_MODES: &[Choice] = &[
+    c("off", "Off (game SSAO)"),
+    c("low", "Low"),
+    c("high", "High"),
+];
+
 /// SanctuaryPort: Diablo III runs at 60 frames per second; a limit above it changes nothing.
 pub static FPS_LIMITS: &[Choice] = &[
     c("30", "30"),
@@ -74,12 +92,13 @@ pub static FPS_LIMITS: &[Choice] = &[
 
 /// SanctuaryPort: Diablo III's frame rate, its own frame limiter (run.py: patches/Diablo_III.xml
 /// "Frame Limiter"); 60 is the game's own. The game's clock follows real time, so only the
-/// frame rate changes.
+/// frame rate changes. 200 is the game's own maximum (its Max Foreground FPS setting) and keeps
+/// the stored value of the former Unlimited, 0, so existing sanctuary.ini files keep their choice.
 pub static FRAME_RATES: &[Choice] = &[
     c("30", "30 FPS"),
     c("60", "60 FPS (the game's own)"),
     c("120", "120 FPS"),
-    c("0", "Unlimited"),
+    c("0", "200 FPS (the game's maximum)"),
 ];
 
 /// GUI Scale: Auto by default (the desktop's scale, fitted to the screen), or the absolute zooms
@@ -541,9 +560,24 @@ mod tests {
     }
 
     #[test]
+    fn game_msaa_offers_what_run_py_reads() {
+        // run.py takes these values (scripts/graphics_options.py MSAA_CHOICES); the default, empty,
+        // picks no patch and leaves the game as it is.
+        let values: Vec<&str> = GAME_MSAA.iter().map(|choice| choice.value).collect();
+        assert_eq!(values, ["", "2", "4"]);
+        let script = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/graphics_options.py"),
+        )
+        .unwrap();
+        assert!(script.contains("MSAA_CHOICES = ('', '2', '4')"));
+        assert!(script.contains(&format!("MSAA_PREFIX = '{GAME_MSAA_PATCH_PREFIX}'")));
+    }
+
+    #[test]
     fn every_table_has_unique_values() {
-        let tables: [&[Choice]; 23] = [
+        let tables: [&[Choice]; 24] = [
             FRAME_RATES,
+            GAME_MSAA,
             FRAME_GENERATION,
             DISPLAY_MODES,
             ANISOTROPY,

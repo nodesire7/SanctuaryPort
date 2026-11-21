@@ -132,8 +132,14 @@ static void mutexes(void) {
     assert((uint32_t)type(&attr,99)==0x80020016);
     assert(type(&attr,2)==0 && init(&mutex,&attr,"recursive-test")==0);
     assert(attr_destroy(&attr)==0 && attr==NULL);
+    /* The game's libc sets its private flag at +0x20 of each new mutex; the
+     * host lock must keep working and must not touch that word. */
+    uint32_t *guest_flags=(uint32_t *)((unsigned char *)mutex+0x20);
+    assert(*guest_flags==2);
+    *guest_flags|=0x100;
     assert(lock(&mutex)==0 && trylock(&mutex)==0);
     assert((uint32_t)destroy(&mutex)==0x80020010);
+    assert(*guest_flags==0x102);
     assert(unlock(&mutex)==0 && unlock(&mutex)==0 && destroy(&mutex)==0);
     assert((uint32_t)lock(&mutex)==0x80020016);
     mutex=NULL;
@@ -209,6 +215,32 @@ static void direct_memory(void) {
     x=NULL; assert(map(&x,length,3,0,a,0)==0);
     assert(*(uint64_t *)x==0); /* released allocation does not leak previous data */
     assert(release(a,length)==0); /* release also unmaps owned mapping */
+}
+/* GitHub #60: one unmap over more regions than the old 64-entry GPU notice queue held. */
+void runtime_memory_set_gpu_hooks(void (*)(uintptr_t,uint64_t), void (*)(uintptr_t,uint64_t), void (*)(uintptr_t,uint64_t));
+static uint64_t unmapped_bytes;
+static void count_map(uintptr_t a, uint64_t n) { (void)a; (void)n; }
+static void count_unmap(uintptr_t a, uint64_t n) { (void)a; unmapped_bytes+=n; }
+static void many_regions_unmapped_at_once(void) {
+    Allocate alloc=GET(Allocate,"rTXw65xmLIA#libkernel");
+    Map map=GET(Map,"L-Q3LEjIbgA#libkernel");
+    Unmap unmap=GET(Unmap,"cQke9UuBQOk#libkernel");
+    Release release=GET(Release,"MBuItvba6z8#libkernel");
+    const uint64_t piece=16384, pieces=100, pool=536870912;
+    int64_t phys=-1;
+    assert(alloc(0,pool,piece*pieces,0,0,&phys)==0);
+    runtime_memory_set_gpu_hooks(count_map,count_unmap,count_map);
+    void *base=NULL;
+    assert(map(&base,piece,3,0,phys,0)==0);
+    for (uint64_t i=1;i<pieces;++i) {
+        void *at=(char *)base+i*piece;
+        /* Alternate protections so neighbours stay separate regions. */
+        assert(map(&at,piece,(i&1) ? 1 : 3,0x10,phys+(int64_t)(i*piece),0)==0 && at==(char *)base+i*piece);
+    }
+    assert(unmap(base,piece*pieces)==0);
+    assert(unmapped_bytes>=piece*pieces);
+    runtime_memory_set_gpu_hooks(NULL,NULL,NULL);
+    assert(release((uint64_t)phys,piece*pieces)==0);
 }
 static void memory_primitives(void) {
     typedef void *(ABI *Set)(void *,int,size_t);
@@ -365,6 +397,7 @@ int main(int argc,char **argv) {
     if (argc>1 && !strcmp(argv[1],"--rwlock-timeouts")) { rw_timeouts(); return 0; }
     libc_support(); posix_mutexes(); wall_time(); exit_handlers(); guards(); mutexes(); direct_memory(); memory_primitives();
     rw_lifecycle(); rw_concurrency(); rw_timeouts();
+    many_regions_unmapped_at_once();
     puts("PASS: callback lifecycle, guard ABI, mutex errors, shared direct memory, memory primitives, resolver scope");
     return 0;
 }

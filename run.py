@@ -438,8 +438,21 @@ def main():
                 graphics_options.frame_rate(graphics_options.read_ini(env['SANCTUARY_CONFIG']))) if diablo3 else None
             if limiter:
                 names.append(limiter)
+            # Graphics > Dynamic resolution off: the game's own fixed 100% scene scale.
+            fixed_scale = diablo3 and 'SANCTUARY_DYNRES' not in env and \
+                graphics_options.read_ini(env['SANCTUARY_CONFIG']).get('dynamic_resolution') == '0'
+            names = [n for n in names if n != graphics_options.FIXED_SCALE_PATCH]
+            if fixed_scale:
+                names.append(graphics_options.FIXED_SCALE_PATCH)
+            # Graphics > Game MSAA: the scene's sample count, also from sanctuary.ini alone.
+            names = [n for n in names if not n.startswith(graphics_options.MSAA_PREFIX)]
+            msaa = graphics_options.msaa(graphics_options.read_ini(env['SANCTUARY_CONFIG'])) if diablo3 else ''
+            if graphics_options.msaa_patch(msaa):
+                names.append(graphics_options.msaa_patch(msaa))
             available = patches.available_patches(patch_xml, profile[2])
             frame_rates = any(n.startswith(graphics_options.FPS_PREFIX) for n in available)
+            # Diablo III's 200 FPS: the game's second limiter, which follows the limiter chosen above.
+            names = graphics_options.foreground_cap_names(names)
             names = graphics_options.restrict_to_available(names, available)
             env['SANCTUARY_PATCHES'] = ';'.join(names)
             env['SANCTUARY_PATCHES_ONLY'] = '1'
@@ -451,28 +464,41 @@ def main():
         if profile:
             # Only the patches found in this eboot.bin count: a frame rate patch that was skipped
             # leaves the engine at 60 FPS, and the notes' memory and VBlank needs follow the same list.
-            applied = (patch_status(out) or {}).get('applied', [])
+            status = patch_status(out) or {}
+            applied = status.get('applied', [])
             engine_fps = graphics_options.applied_engine_fps(applied)
             dmem, vblank = patch_requirements(patch_xml, applied, profile[2])
             # Graphics > V-Sync (sanctuary.ini vertical_sync): the profile keeps it off otherwise.
             if diablo3 and 'SANCTUARY_VSYNC' not in caller_env:
                 vsync = graphics_options.read_ini(env['SANCTUARY_CONFIG']).get('vertical_sync') == '1'
                 env['SANCTUARY_VSYNC'] = '1' if vsync else '0'
-            # Graphics > Dynamic resolution off: the scene stays at 100% (guest_clock_scale.h).
-            if diablo3 and 'SANCTUARY_DYNRES' not in caller_env and \
-                    graphics_options.read_ini(env['SANCTUARY_CONFIG']).get('dynamic_resolution') == '0':
-                env['SANCTUARY_DYNRES'] = 'fixed'
+            # Graphics > Dynamic resolution off: the scene stays at 100%. An eboot.bin the fixed-scale
+            # patch was not found in gets the slowed GPU clock instead (guest_clock_scale.h), derived
+            # so that "Apply and restart" decides again.
+            if fixed_scale:
+                reason = graphics_options.fixed_scale_fallback(status)
+                if reason:
+                    env['SANCTUARY_DYNRES'] = 'fixed'
+                    derived.append('SANCTUARY_DYNRES')
+                    print(f'Dynamic resolution: the fixed-scale patch was left out ({reason}); '
+                          'the GPU clock is slowed instead', flush=True)
                 print('Dynamic resolution: off (the scene stays at 100%)', flush=True)
             for key, value in (graphics_options.limiter_environment(applied) if diablo3 else {}).items():
                 if key not in env:
                     env[key] = value
                     derived.append(key)
-            limiter = next((n for n in applied if n.startswith(graphics_options.LIMITER_PREFIX)), None)
             if diablo3:
-                rate = limiter.split(' - ')[1] if limiter else '60 FPS'
+                rate = graphics_options.frame_rate_label(applied)
                 env['SANCTUARY_FRAME_RATE'] = rate + '  ·  Launcher > Graphics'
                 derived.append('SANCTUARY_FRAME_RATE')
                 print(f'Frame rate: {rate}', flush=True)
+            for key, value in graphics_options.msaa_environment(msaa).items():
+                if key not in env:
+                    env[key] = value
+                    derived.append(key)
+            if msaa:
+                count = next((n.split(' - ')[1] for n in applied if n.startswith(graphics_options.MSAA_PREFIX)), '2x')
+                print(f'Game MSAA: {count}, samples averaged', flush=True)
             for key, value in (('SANCTUARY_DMEM_MB', dmem), ('SANCTUARY_VBLANK_HZ', vblank)):
                 if value and key not in env:
                     env[key] = str(value)

@@ -31,10 +31,11 @@ use sanctuaryport_launcher::ui::widgets;
 use sanctuaryport_launcher::ui::widgets::modal::{Modal, ModalKind, ModalMessage};
 
 /// The page order of the Global Constraints (SanctuaryPort: the log has no tab).
-const ORDER: [Page; 6] = [
+const ORDER: [Page; 7] = [
     Page::Home,
     Page::Graphics,
     Page::Game,
+    Page::Seasons,
     Page::Trophies,
     Page::Controls,
     Page::Advanced,
@@ -410,12 +411,16 @@ fn a_red_hairline_tops_the_bar_and_edges_the_drawer() {
 }
 
 /// The drawer subtitles of the mockup (`launcher-mockup-v13.html`), without its sample counts.
-const SUBTITLES: [(Page, &str); 6] = [
+const SUBTITLES: [(Page, &str); 7] = [
     (
         Page::Graphics,
         "↻ applies on the next start. The others also change in game (Insert or R3+L2).",
     ),
     (Page::Game, "Your game dump, saves and language."),
+    (
+        Page::Seasons,
+        "The offline season, its events and the 15 day rotation.",
+    ),
     (
         Page::Trophies,
         "The trophies this port recorded while you played.",
@@ -475,12 +480,12 @@ fn rtl_mirrors_the_drawer_rows_and_header() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("settings.json"), r#"{"ui_language": "ar"}"#).unwrap();
     let mut state = state_in(dir.path());
-    let _ = app::update(&mut state, Message::ShowPage(Page::Graphics));
+    let _ = app::update(&mut state, Message::ShowPage(Page::Advanced));
     let mut ui = settled_ui(&mut state);
-    // A row: its control (the screenshots button) sits to the left of its name.
-    let name = ui.find(tr("ar", "Screenshot key: F12")).unwrap().bounds();
+    // A row: its control (the shader cache button) sits to the left of its name.
+    let name = ui.find(tr("ar", "Shader cache")).unwrap().bounds();
     let control = ui
-        .find(tr("ar", "Open the screenshots folder"))
+        .find(tr("ar", "Delete shader cache"))
         .unwrap()
         .bounds();
     assert!(
@@ -492,7 +497,7 @@ fn rtl_mirrors_the_drawer_rows_and_header() {
     // The header: Save at the left, the title and its subtitle at the right.
     let save = ui.find(tr("ar", "Save")).unwrap().bounds();
     let subtitle = ui
-        .find(tr("ar", Page::Graphics.subtitle_en()))
+        .find(tr("ar", Page::Advanced.subtitle_en()))
         .unwrap()
         .bounds();
     assert!(
@@ -507,13 +512,13 @@ fn rtl_mirrors_the_drawer_rows_and_header() {
     let dir = tempfile::tempdir().unwrap();
     let mut state = state_in(dir.path());
     state.lang = "en".into();
-    let _ = app::update(&mut state, Message::ShowPage(Page::Graphics));
+    let _ = app::update(&mut state, Message::ShowPage(Page::Advanced));
     let mut ui = settled_ui(&mut state);
-    let name = ui.find("Screenshot key: F12").unwrap().bounds();
-    let control = ui.find("Open the screenshots folder").unwrap().bounds();
+    let name = ui.find("Shader cache").unwrap().bounds();
+    let control = ui.find("Delete shader cache").unwrap().bounds();
     assert!(name.x < control.x);
     let save = ui.find("Save").unwrap().bounds();
-    let subtitle = ui.find(Page::Graphics.subtitle_en()).unwrap().bounds();
+    let subtitle = ui.find(Page::Advanced.subtitle_en()).unwrap().bounds();
     assert!(subtitle.x < save.x);
 }
 

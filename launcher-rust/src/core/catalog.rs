@@ -3,8 +3,8 @@
 
 use crate::core::options::{
     Choice, AIM_STYLES, ANISOTROPY, AUDIO_CHANNELS, DISPLAY_MODES, DRAW_PIPE,
-    ENGINE_FPS_CHOICES, FPS_LIMITS, FRAME_RATES, FRAMES_QUEUED, FRAME_GENERATION, GLYPH_STYLES,
-    LANGUAGES, LIVE_RESOLUTION, MENU_CONFIRM_STYLES, NO_MSAA,
+    ENGINE_FPS_CHOICES, FPS_LIMITS, FRAME_RATES, FRAMES_QUEUED, FRAME_GENERATION, GAME_MSAA,
+    GLYPH_STYLES, GTAO_MODES, LANGUAGES, LIVE_RESOLUTION, MENU_CONFIRM_STYLES, NO_MSAA,
     OUTPUTS, PRESETS, READBACKS, STREAM_MEMORY, TEMPORAL_AA, UI_LANGUAGES, UI_SCALES, UPSCALERS,
     VIDEO_BACKENDS,
 };
@@ -297,6 +297,19 @@ pub static SETTINGS: &[Setting] = &[
     // Derived, not 1:1: `env.rs` builds SANCTUARY_PATCHES and SANCTUARY_KEY_MAP / SANCTUARY_PAD_MAP
     // from the content of these two, so they carry no `env`.
     app("game_patches", Json, Object, None),
+    // SanctuaryPort: Game > Offline seasons: how the events follow the season ("manual", "season",
+    // "full"), the rotation ("<first season>:<day it started>", days since 1970) and its season
+    // length in days (15, 30, 60 or 90; picking another length restarts the count from today at
+    // today's season).
+    app("season_mode", Kind::Text, Text("manual"), None),
+    app("season_rotate", Flag, Bool(false), None),
+    app("season_rotate_start", Kind::Text, Text(""), None),
+    app("season_rotate_days", Kind::Int, Int(15), None),
+    // SanctuaryPort: Seasons > The Darkening of Tristram: the check box and the first and last day
+    // it is open ("YYYY-MM-DD", empty = no limit on that side).
+    app("tristram_on", Flag, Bool(false), None),
+    app("tristram_start", Kind::Text, Text(""), None),
+    app("tristram_end", Kind::Text, Text(""), None),
     app("controls", Json, Object, None),
     app("pad_style", Kind::Text, Text("playstation"), None),
     app("controls_layout", Kind::Int, Int(5), None),
@@ -322,7 +335,8 @@ pub static SETTINGS: &[Setting] = &[
     // SanctuaryPort: Graphics > V-Sync. A key of its own: `vsync` was saved as 1 by every build while
     // Diablo's profile kept it off, so reading it would turn V-Sync on for almost everyone.
     ini("vertical_sync", Flag, Bool(false), true, 54),
-    // SanctuaryPort: Graphics > Dynamic resolution; off keeps the scene at 100% (SANCTUARY_DYNRES).
+    // SanctuaryPort: Graphics > Dynamic resolution; off keeps the scene at 100% (run.py: the game's
+    // own fixed scale by a patch, else SANCTUARY_DYNRES).
     ini("dynamic_resolution", Flag, Bool(true), true, 55),
     ini(
         "engine_fps",
@@ -383,6 +397,10 @@ pub static SETTINGS: &[Setting] = &[
     ini("auto_safe_fps", Flag, Bool(true), true, 33),
     // FXAA of the finished frame while FSR 3 is off, read by the game from sanctuary.ini.
     ini("fxaa", Flag, Bool(false), true, 34),
+    // Opt-in replacement of Diablo III's PS4 SSAO upscale pass (off, low, high).
+    ini("gtao", Pick(GTAO_MODES), Text("off"), true, 56),
+    // Diablo III's scene samples ("" the game's own, 2, 4), read by run.py (Game MSAA patches).
+    ini("msaa", Pick(GAME_MSAA), Text(""), true, 57),
     ini("free_camera", Flag, Bool(false), true, 35),
     // The in-game menu's cheats and multipliers (#1135), read by the game from sanctuary.ini.
     ini("cheat_health", Flag, Bool(false), true, 36),
@@ -546,14 +564,14 @@ mod tests {
                 "cheat_very_hard"
             ]
         );
-        assert_eq!(keys.last(), Some(&"dynamic_resolution"));
+        assert_eq!(keys.last(), Some(&"msaa"));
         let shown: Vec<_> = rows.iter().filter(|s| s.written).map(|s| s.key).collect();
         assert_eq!(shown, SHOWN_INI_KEYS.iter().copied().collect::<Vec<_>>());
     }
 
     #[test]
-    fn shown_ini_keys_are_the_47_controls_of_the_window() {
-        assert_eq!(SHOWN_INI_KEYS.len(), 52); // SanctuaryPort: + fsr1, rcas, rcas_strength, temporal_aa, unlock_cosmetics, fxaa, frame_rate, vertical_sync, dynamic_resolution, - anti_aliasing
+    fn shown_ini_keys_are_the_54_controls_of_the_window() {
+        assert_eq!(SHOWN_INI_KEYS.len(), 54); // Includes the GTAO and Game MSAA sample controls.
         for seeded in ["monitor", "hdr", "glyph_style"] {
             assert!(SHOWN_INI_KEYS.contains(&seeded), "{seeded}");
         }

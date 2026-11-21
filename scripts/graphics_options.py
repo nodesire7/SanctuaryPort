@@ -31,7 +31,17 @@ FPS_PREFIX = 'Frame Rate Patch'
 TEXTURE_FIX = 'Bug Fix - Texture Corruption Fix'
 # Diablo III: sanctuary.ini frame_rate picks the game's own frame limiter (patches/Diablo_III.xml).
 LIMITER_PREFIX = 'Frame Limiter'
-FRAME_RATES = ('30', '60', '120', '0')  # 0 = unlimited
+FRAME_RATES = ('30', '60', '120', '0')  # 0 = 200 FPS
+# Diablo III's frame rate 0 is the launcher's 200 FPS (the stored value of the former Unlimited, so
+# existing sanctuary.ini files keep it; 200 is read as 0): no wait in the Frame Limiter, and the
+# game's own second limiter (the PC game's Max Foreground FPS, 150 by default: about 143 FPS) asked
+# for its maximum.
+FOREGROUND_CAP_PATCH = 'Max Foreground FPS - 200'
+# Diablo III: sanctuary.ini dynamic_resolution=0 picks the game's own fixed 100% scene scale.
+FIXED_SCALE_PATCH = 'Dynamic Resolution - Off'
+# Diablo III: sanctuary.ini msaa picks the scene's sample count ('' = the game's own 2, as before).
+MSAA_PREFIX = 'Game MSAA'
+MSAA_CHOICES = ('', '2', '4')
 
 
 def read_ini(path):
@@ -183,22 +193,26 @@ def patch_names(names, options, texture_fix_available=True):
 
 
 def frame_rate(ini):
-    """Diablo III's frame rate choice (sanctuary.ini frame_rate): 30, 60, 120 or 0 (unlimited)."""
+    """Diablo III's frame rate choice (sanctuary.ini frame_rate): 30, 60, 120 or 0 (200 FPS)."""
     value = ini.get('frame_rate')
     if value is None and ini.get('fps_limit') == '30':
         return '30'  # the old Frame rate limit row's 30
+    if value == '200':
+        return '0'  # the name the launcher shows (--set frame_rate=200)
     return value if value in FRAME_RATES else '60'
 
 
 def limiter_patch(rate):
-    """The Frame Limiter patch for a frame_rate choice; None for 60, the game's own."""
+    """The Frame Limiter patch for a frame_rate choice; None for 60, the game's own. The 200 FPS choice
+    (0) takes the one that does not wait, still named Unlimited."""
     return {'30': f'{LIMITER_PREFIX} - 30 FPS', '120': f'{LIMITER_PREFIX} - 120 FPS',
             '0': f'{LIMITER_PREFIX} - Unlimited'}.get(rate)
 
 
 def limiter_environment(applied):
     """Environment for the applied Frame Limiter patch: the vblank runs fast (480 Hz) so a frame is
-    shown as soon as it is done, and the present thread lets through the chosen rate (0: no limit).
+    shown as soon as it is done, and the present thread lets through the chosen rate (200 FPS:
+    the vblank's 480, which was the ceiling already; without a limit frames wait for a tick).
     That holds for the game's own 60 too (GitHub #29): its limiter waits 16683 us (59.94 Hz) while a
     60 Hz vblank ticks every 16667 us, so a frame waited a whole extra tick about every 12-17 s
     (6 repeated frames in 75 s, none with immediate flips), and frames were held to the tick instead
@@ -208,10 +222,67 @@ def limiter_environment(applied):
         if name == f'{LIMITER_PREFIX} - 120 FPS':
             return {'SANCTUARY_VBLANK_HZ': '0', 'SANCTUARY_FPS_LIMIT': '120'}
         if name == f'{LIMITER_PREFIX} - Unlimited':
-            return {'SANCTUARY_VBLANK_HZ': '0', 'SANCTUARY_FPS_LIMIT': '0'}
+            # 480 is what SANCTUARY_VBLANK_HZ=0 stands for (gpu/shim/core/emulator_settings.h
+            # GetVblankFrequency): change the two together. A caller's own SANCTUARY_VBLANK_HZ moves
+            # the tick only; frames are still shown as they arrive, up to 480 a second
+            # (SANCTUARY_FPS_LIMIT=0 with it: one per tick, as before), and above 480 Hz the stall
+            # diagnostic takes the 480 for the frame rate (SANCTUARY_STALL_MS).
+            return {'SANCTUARY_VBLANK_HZ': '0', 'SANCTUARY_FPS_LIMIT': '480'}
         if name == f'{LIMITER_PREFIX} - 30 FPS':
             return {'SANCTUARY_FPS_LIMIT': '0'}
     return {'SANCTUARY_VBLANK_HZ': '0', 'SANCTUARY_FPS_LIMIT': '60'}
+
+
+def fixed_scale_fallback(status):
+    """None when the last start (patch_status.json) applied FIXED_SCALE_PATCH, else why it did not:
+    an eboot.bin without that code keeps its scene at 100% through the slowed GPU clock instead
+    (SANCTUARY_DYNRES=fixed, guest_clock_scale.h)."""
+    status = status or {}
+    if FIXED_SCALE_PATCH in status.get('applied', []):
+        return None
+    return status.get('skipped', {}).get(FIXED_SCALE_PATCH, 'not applied')
+
+
+def foreground_cap_names(names):
+    """The patch list with the Max Foreground FPS patch when it holds the Frame Limiter patch that does
+    not wait (the 200 FPS choice), and without it otherwise, whatever the list named: at 30, 60 and
+    120 FPS the first limiter waits longer than the second one, so the patch would change nothing."""
+    names = [n for n in names if n != FOREGROUND_CAP_PATCH]
+    if f'{LIMITER_PREFIX} - Unlimited' in names:
+        names.append(FOREGROUND_CAP_PATCH)
+    return names
+
+
+def frame_rate_label(applied):
+    """The applied frame rate as the log and the in-game menu name it: the launcher's 200 FPS is the
+    Frame Limiter patch that does not wait plus the Max Foreground FPS patch; without the latter (not
+    found in this eboot.bin) the game's own setting, 150, still holds it at about 143 FPS."""
+    limiter = next((n for n in applied if n.startswith(LIMITER_PREFIX)), None)
+    if limiter is None:
+        return '60 FPS'
+    if limiter == f'{LIMITER_PREFIX} - Unlimited':
+        if FOREGROUND_CAP_PATCH in applied:
+            return '200 FPS'
+        return f'about 143 FPS ({FOREGROUND_CAP_PATCH} not found in this eboot.bin)'
+    return limiter.split(' - ')[1]
+
+
+def msaa(ini):
+    """Diablo III's Game MSAA choice (sanctuary.ini msaa): '' (the game's own), '2' or '4'."""
+    value = ini.get('msaa', '')
+    return value if value in MSAA_CHOICES else ''
+
+
+def msaa_patch(choice):
+    """The Game MSAA patch for a choice; None for 2 samples, which the game draws by itself."""
+    return {'4': f'{MSAA_PREFIX} - 4x'}.get(choice)
+
+
+def msaa_environment(choice):
+    """The game copies its multisampled scene for the post passes by reading sample 0 alone, so the
+    samples only smooth edges when the GPU core averages them (SANCTUARY_MSAA_RESOLVE, sanctuary_msaa.h).
+    The game's own choice keeps that copy as it is."""
+    return {'SANCTUARY_MSAA_RESOLVE': '1'} if choice else {}
 
 
 def restrict_to_available(names, available):

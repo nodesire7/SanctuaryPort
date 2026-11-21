@@ -23,8 +23,49 @@ class Diablo3PatchTests(unittest.TestCase):
         'Double Treasure Goblins', 'Double Bounty Bags', 'Royal Grandeur', 'Legacy of Nightmares', "Triune's Will",
         'Pandemonium', 'Kanai Powers', 'Trials of Tempests', 'Shadow Clones', "Fourth Kanai's Cube Slot",
         'Ethereal Items', 'Soul Shards', 'Swarm Rifts', 'Sanctified Items', 'Whimsyshire (Easter Egg World)',
-        'Also in non-seasonal games', 'Challenge Rifts')]
+        'Also in non-seasonal games', 'Challenge Rifts', 'The Darkening of Tristram')]
     OFFLINE_NAMES = {'Offline Seasons', 'Offline: no sign-in warning', *SEASONS, *EVENTS}
+    SMOOTH = 'Experimental: Smooth character motion above 60 FPS'
+    # 1.47 movement interpolation (0x256fc0): the original bytes around its read of the client time.
+    SMOOTH_SITE = bytes.fromhex('c5f2589338020000 c5f258b33c020000 0fb793d8010000 89d6 c5fa104060'
+                                '488b80780a0000 c5ea5cd0 c5ca5cc0')
+
+    def test_smooth_motion_patch_is_off_and_found_by_signature(self):
+        # GitHub #24: experimental, never on by default, and skipped (not misapplied) on another eboot.
+        xml = ROOT / 'patches' / 'Diablo_III.xml'
+        root = ET.parse(xml).getroot()
+        (meta,) = [m for m in root.iter('Metadata') if m.get('Name') == self.SMOOTH]
+        self.assertEqual(meta.get('isEnabled'), 'false')
+        self.assertEqual(meta.get('AppVer'), '01.47')
+        self.assertNotIn(self.SMOOTH, patches.selected_patches(xml, '01.47', ''))
+        targets = {t.get('Name') for t in meta.iter('Target')}
+        for target in meta.iter('Target'):
+            self.assertTrue(target.get('Pattern'), target.get('Name'))
+        for line in meta.iter('Line'):
+            self.assertTrue(line.get('Pattern') or line.get('Target') in targets, line.get('Address'))
+        # A small image: the site, and the zero padding that ends the code (the offline seasons' anchor).
+        anchor = bytes.fromhex(next(t for t in meta.iter('Target')).get('Pattern').replace(' ', ''))
+        site_at, anchor_at = 0x1000, 0x3000
+        image = bytearray(0x6000)
+        image[site_at:site_at + len(self.SMOOTH_SITE)] = self.SMOOTH_SITE
+        image[anchor_at:anchor_at + 24] = anchor[:24]
+        writes = dict(patches.compile_patches(xml, [self.SMOOTH], '01.47', [(0, len(image))], image=bytes(image)))
+        cave = anchor_at + 4236
+        call = site_at + 25
+        self.assertEqual(set(writes), {cave, call})
+        self.assertEqual(writes[call][:1], b'\xe8')
+        self.assertEqual(call + 5 + struct.unpack('<i', writes[call][1:])[0], cave)
+        code = writes[cave]
+        # (W+0x54 ticks * 50 + accumulated W+0x38 - simulated W+0x40) / 3000.0, rcx saved, xmm0 out.
+        self.assertEqual(code[:1] + code[-6:-4], bytes.fromhex('5159c3'))
+        self.assertEqual(code[1:13], bytes.fromhex('8b48546bc9320348382b4840'))
+        disp = struct.unpack('<i', code[21:25])[0]
+        self.assertEqual(struct.unpack('<f', code[25 + disp:29 + disp])[0], 3000.0)
+        # The game's own bytes are untouched without the patch, and another build is skipped whole.
+        skipped = {}
+        self.assertEqual(patches.compile_patches(xml, [self.SMOOTH], '01.47', [(0, 0x6000)],
+                                                 image=bytes(0x6000), skipped=skipped), [])
+        self.assertIn(self.SMOOTH, skipped)
 
     def test_offline_patches_find_every_site_by_signature(self):
         # A different eboot is skipped, never overwritten: every Line has a signature, or writes at a
@@ -72,10 +113,14 @@ class Diablo3PatchTests(unittest.TestCase):
                               '2560x1080', '3440x1440', '3840x1600', '5120x1440',
                               '1280x800', '1920x1200', '2560x1600')}
         expected |= {f'{graphics_options.LIMITER_PREFIX} - {n}' for n in ('30 FPS', '120 FPS', 'Unlimited')}
-        expected |= self.OFFLINE_NAMES
+        expected.add(f'{graphics_options.MSAA_PREFIX} - 4x')
+        expected |= self.OFFLINE_NAMES | {self.SMOOTH, graphics_options.FIXED_SCALE_PATCH,
+                                          graphics_options.FOREGROUND_CAP_PATCH}
         self.assertEqual(names, expected)
         for meta in ET.parse(xml).getroot().iter('Metadata'):
-            if meta.get('Name') in self.OFFLINE_NAMES:
+            if (meta.get('Name') in self.OFFLINE_NAMES | {self.SMOOTH, graphics_options.FIXED_SCALE_PATCH,
+                                                          graphics_options.FOREGROUND_CAP_PATCH}
+                    or meta.get('Name').startswith(graphics_options.MSAA_PREFIX)):
                 continue
             if meta.get('Name').startswith(graphics_options.LIMITER_PREFIX):
                 # The frame limiter: one microsecond wait, 16683 (0x412b) in the pattern.
@@ -106,6 +151,45 @@ class Diablo3PatchTests(unittest.TestCase):
                 self.assertEqual(len(lines), 3, size)
                 aspect = struct.unpack('<f', bytes.fromhex(lines[2].get('Value')))[0]
                 self.assertAlmostEqual(aspect, width / height, places=5, msg=size)
+
+    def test_the_fps_cap_patch_asks_the_second_limiter_for_200(self):
+        # The game's second limiter waits (n + 2000) / (2 * n) whole ms for the setting n (150: 7 ms,
+        # about 143 FPS). The patch passes 200 in place of the setting it reads.
+        xml = ROOT / 'patches' / 'Diablo_III.xml'
+        name = graphics_options.FOREGROUND_CAP_PATCH
+        meta = ET.parse(xml).getroot().find(f"Metadata[@Name='{name}']")
+        line, = meta.iter('Line')
+        target, = meta.iter('Target')
+        value, at = bytes.fromhex(line.get('Value')), int(line.get('At'))
+        # mov eax, imm32 with the rate the entry is named after, in place of a call of the same
+        # length (the read of the setting), between the test of the limiter's switch and the call
+        # of the limiter with eax as its second argument.
+        pattern = line.get('Pattern').split()
+        self.assertEqual(pattern[at:at + len(value)], ['e8', '??', '??', '??', '??'])
+        self.assertEqual(value[0], 0xb8)
+        self.assertTrue(name.endswith(f" - {int.from_bytes(value[1:], 'little')}"))
+        self.assertEqual(pattern[at - 12:at - 8], ['85', 'c0', '74', '??'])
+        self.assertEqual(pattern[at + 12:at + 15], ['89', 'c6', 'e8'])
+        # One entry for every build checked; they differ in the je distance and in the order of the
+        # limiter's clamp of n to at least 1 (test ebx, ebx; mov ecx, 1) before the guarded arithmetic.
+        layouts = {'1.46, 1.47, 1.25': (0x1b, '85 db b9 01 00 00 00'), '1.00': (0x21, 'b9 01 00 00 00 85 db')}
+        for build, (skip, clamp) in layouts.items():
+            site = bytearray(bytes.fromhex(' '.join('5a' if b == '??' else b for b in pattern)))
+            site[at - 9] = skip
+            limiter = bytes.fromhex(clamp + ' ' + target.get('Pattern'))
+            image = bytearray(0x400)
+            image[0x100:0x100 + len(site)] = site
+            image[0x200:0x200 + len(limiter)] = limiter
+            skipped = {}
+            writes = patches.compile_patches(xml, [name], None, [(0, 0x400)], bytes(image), skipped)
+            self.assertEqual((writes, skipped), ([(0x100 + at, value)], {}), build)
+            # Another build: the call site differs, or the limiter does not compute this limit.
+            for changed in (0x100 + at - 10, 0x200 + 7 + 4):
+                other = bytearray(image)
+                other[changed] ^= 0xff
+                skipped = {}
+                self.assertEqual(patches.compile_patches(xml, [name], None, [(0, 0x400)], bytes(other), skipped), [])
+                self.assertEqual(skipped, {name: 'signature not found'}, build)
 
     def test_us_1_00_gets_its_own_sites(self):
         # GitHub #16: the 1.47 signatures are not in the US 1.00 eboot; its own entry is used.
@@ -140,10 +224,49 @@ class Diablo3PatchTests(unittest.TestCase):
         self.assertEqual(writes, [(0x800 + 6, (2560).to_bytes(4, 'little')),
                                   (0x800 + 17 + 0x40 + 6, (1440).to_bytes(4, 'little'))])
 
+    def test_dynamic_resolution_off_takes_the_fixed_scale_branch(self):
+        xml = ROOT / 'patches' / 'Diablo_III.xml'
+        line, = ET.parse(xml).getroot().find(f"Metadata[@Name='{graphics_options.FIXED_SCALE_PATCH}']").iter('Line')
+        pattern, at = line.get('Pattern').split(), int(line.get('At'))
+        # The je over "scale = 1.0, countdown = 0" becomes two nops. The call before it is to a
+        # function that moved between 1.46 and 1.47: its displacement is not part of the signature.
+        self.assertEqual((pattern[3:8], pattern[at:at + 2]), (['e8', '??', '??', '??', '??'], ['74', '10']))
+        for displacement in ('72fd5100', 'f2ff5100'):
+            image = bytes(0x100) + bytes.fromhex(''.join(pattern).replace('????????', displacement)) + bytes(0x100)
+            self.assertEqual(patches.compile_patches(xml, [graphics_options.FIXED_SCALE_PATCH], '01.47',
+                                                     [(0, len(image))], image=image),
+                             [(0x100 + at, bytes.fromhex('9090'))])
+
     def test_both_releases_use_it(self):
         for title in ('CUSA00242', 'CUSA00243'):
             profile = patches.game_profile(title)
             self.assertEqual(profile[1].name, 'Diablo_III.xml')
+
+    def test_game_msaa_rewrites_the_level(self):
+        # The 1.47 code around each site (eboot 0xbe420, 0xbe4fe), apart in an image.
+        level_a = bytes.fromhex('c7433004000000418b4754894334')
+        level_b = bytes.fromhex('c7433004000000418b4654894334')
+        image = bytearray(0x100)
+        sites = {}
+        for name, code in (('level_a', level_a), ('level_b', level_b)):
+            sites[name] = len(image)
+            image += code + bytearray(0x100)
+        xml = ROOT / 'patches' / 'Diablo_III.xml'
+        level16 = bytes.fromhex('c7433010000000')
+        four = patches.compile_patches(xml, ['Game MSAA - 4x'], '01.47', [(0, len(image))], image=bytes(image))
+        self.assertEqual(sorted(four), [(sites['level_a'], level16), (sites['level_b'], level16)])
+        # Each write replaces a whole instruction of the same length: movl $4 becomes movl $16.
+        for meta in ET.parse(xml).getroot().iter('Metadata'):
+            if meta.get('Name').startswith(graphics_options.MSAA_PREFIX):
+                for line in meta.iter('Line'):
+                    at, value = int(line.get('At')), bytes.fromhex(line.get('Value'))
+                    old = bytes.fromhex(''.join(line.get('Pattern').split()[at:at + len(value)]))
+                    self.assertEqual(old, bytes.fromhex('c7433004000000'))
+        # Another executable: no signature found, nothing written, the entry reported as skipped.
+        skipped = {}
+        self.assertEqual(patches.compile_patches(xml, ['Game MSAA - 4x'], '01.47', [(0, 0x1000)],
+                                                 image=bytes(0x1000), skipped=skipped), [])
+        self.assertIn('Game MSAA - 4x', skipped)
 
 
 class GamepadTests(unittest.TestCase):
@@ -177,3 +300,20 @@ class InlineAddonTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class BundledModuleTests(unittest.TestCase):
+    """GitHub #28: a 1.00 eboot imports /app0/dlcldr.prx, at the root of the game folder."""
+
+    def test_modules_are_found_in_sce_module_then_at_the_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            game = Path(tmp)
+            (game / 'sce_module').mkdir()
+            (game / 'sce_module' / 'libc.prx').write_bytes(b'x')
+            (game / 'dlcldr.prx').write_bytes(b'x')
+            self.assertEqual(game_profiles.module_path(game, 'libc.prx'), game / 'sce_module' / 'libc.prx')
+            self.assertEqual(game_profiles.module_path(game, 'dlcldr.prx'), game / 'dlcldr.prx')
+            self.assertIsNone(game_profiles.module_path(game, 'libSceNpToolkit2.prx'))
+
+    def test_diablo_links_the_dlc_loader_when_the_dump_has_it(self):
+        self.assertIn('dlcldr.prx', game_profiles.DIABLO3['modules'])
