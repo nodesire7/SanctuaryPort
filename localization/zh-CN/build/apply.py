@@ -1,12 +1,15 @@
 """Write the Chinese localization into a pristine upstream checkout, before it is built.
 
-Two things happen here, both on a throwaway checkout of an upstream tag:
+Everything this project adds is written here, on a throwaway checkout of an upstream tag:
 
   * the launcher's texts (``launcher-rust/assets/i18n.json``) and trophy list gain the Chinese
     translation. They are embedded with ``include_str!``, so the translation has to be part of
     the build - there is no file to redirect at run time;
-  * the updater is pointed at this fork's releases and its downloads are routed through the
-    mirrors that are reachable from the players' networks (``overlay/update_routes.rs``).
+  * the updater is pointed at this fork's releases, its downloads are routed through the
+    mirrors that are reachable from the players' networks (``overlay/update_routes.rs``), and a
+    blocked API falls back to the release page;
+  * the Advanced page gains this project's credit and forum link, which upstream has no place
+    for. Crash reports go to this project's tracker.
 
 Every anchor below is required: an upstream change that moves one stops the build loudly
 instead of shipping a launcher that silently never updates.
@@ -23,9 +26,13 @@ OVERLAY = HERE.parent / "overlay"
 
 UPSTREAM_REPO = "CaduGimenes/SanctuaryPort"
 FORK_REPO = "nodesire7/SanctuaryPort"
+FORUM_URL = "https://bbs.gbtgame.me"
+CREDIT_LINE = "汉化作者：A-FEI-   ·   GBTGAME 论坛  bbs.gbtgame.me"
 
 UPDATE_RS = "launcher-rust/src/core/update.rs"
 ROUTES_RS = "launcher-rust/src/core/update_routes.rs"
+APP_RS = "launcher-rust/src/ui/app.rs"
+ADVANCED_RS = "launcher-rust/src/ui/pages/advanced.rs"
 
 
 def read(path: Path):
@@ -35,6 +42,12 @@ def read(path: Path):
 def write_json(path: Path, value) -> None:
     path.write_text(json.dumps(value, ensure_ascii=False, separators=(",", ":")) + "\n",
                     encoding="utf-8")
+
+
+def replace_once(text: str, old: str, new: str, what: str) -> str:
+    if text.count(old) != 1:
+        raise SystemExit(f"the patch anchor for {what} moved; upstream changed it")
+    return text.replace(old, new)
 
 
 def apply_launcher(checkout: Path) -> None:
@@ -77,12 +90,6 @@ def apply_trophies(checkout: Path) -> None:
     print(f"trophies: {described}/{len(catalogue['trophies'])} texts, {named} group names")
 
 
-def replace_once(text: str, old: str, new: str, what: str) -> str:
-    if text.count(old) != 1:
-        raise SystemExit(f"update.rs no longer holds {what} exactly once; the patch moved")
-    return text.replace(old, new)
-
-
 def apply_update(checkout: Path) -> None:
     """Point the updater at this fork and route its downloads through the mirrors."""
     source = checkout / UPDATE_RS
@@ -93,7 +100,6 @@ def apply_update(checkout: Path) -> None:
     text = replace_once(text, f'github.com/{UPSTREAM_REPO}/releases/latest',
                         f'github.com/{FORK_REPO}/releases/latest', "the release page")
 
-    # The mirror module goes next to update.rs and is used from its download site only.
     anchor = "use crate::core::release::{self, ReleaseId};\n"
     if anchor not in text:
         raise SystemExit("update.rs no longer imports release the way the patch expects")
@@ -106,8 +112,6 @@ def apply_update(checkout: Path) -> None:
                     "expected.as_deref(), report).map_err(text)?;")
     text = replace_once(text, download_call, patched_call, "the Windows download")
 
-    # When the anonymous API answers nothing usable (rate limited, blocked), the public release
-    # page still names the tag: ask it instead of leaving the player without updates.
     listing = '''/// One GET of the list (Accept `application/vnd.github+json`, global timeout 15 s), then `parse_releases`.
 pub fn list_releases(windows: bool) -> Result<Vec<release::Release>, UpdateError> {
     // SANCTUARY_RELEASES_API: another list (a test server), to try an update before publishing it.
@@ -165,6 +169,53 @@ fn list_from(api: &str, windows: bool) -> Result<Vec<release::Release>, UpdateEr
     print(f"updater: releases of {FORK_REPO}, mirrors + release page fallback, issue link moved")
 
 
+def apply_branding(checkout: Path) -> None:
+    """Put this project's credit and forum link on the Advanced page.
+
+    Upstream has no such element; the row is added at build time, like the translations, so
+    this branch still holds no upstream file.
+    """
+    app = checkout / APP_RS
+    text = app.read_text(encoding="utf-8")
+
+    text = replace_once(
+        text,
+        "    /// One read of `nav_pad`.\n    NavPoll,\n",
+        "    /// One read of `nav_pad`.\n    NavPoll,\n"
+        "    /// Open the localization forum (this build's addition; upstream has no such link).\n"
+        "    OpenForum,\n",
+        "the message list",
+    )
+    text = replace_once(
+        text,
+        "        Message::OpenFolder(folder) => {\n",
+        "        Message::OpenForum => {\n"
+        f'            let _ = crate::core::desktop::open_url("{FORUM_URL}");\n'
+        "        }\n"
+        "        Message::OpenFolder(folder) => {\n",
+        "the folder handler",
+    )
+    app.write_text(text, encoding="utf-8")
+
+    advanced = checkout / ADVANCED_RS
+    page = advanced.read_text(encoding="utf-8")
+    page = replace_once(
+        page,
+        '            Some(&hint("F12 in the game saves a screenshot.")),\n'
+        "        ));\n"
+        "    page.into()\n",
+        '            Some(&hint("F12 in the game saves a screenshot.")),\n'
+        "        ))\n"
+        '        .push(section(state.rtl, "汉化"))\n'
+        f'        .push(text("{CREDIT_LINE}"))\n'
+        '        .push(flat("打开汉化论坛".to_string(), Message::OpenForum));\n'
+        "    page.into()\n",
+        "the page tail",
+    )
+    advanced.write_text(page, encoding="utf-8")
+    print(f"branding: {CREDIT_LINE} + forum link on the Advanced page")
+
+
 def main() -> None:
     checkout = Path(sys.argv[1]).resolve()
     if not (checkout / "launcher-rust/Cargo.toml").is_file():
@@ -172,6 +223,7 @@ def main() -> None:
     apply_launcher(checkout)
     apply_trophies(checkout)
     apply_update(checkout)
+    apply_branding(checkout)
     print("localization applied")
 
 
