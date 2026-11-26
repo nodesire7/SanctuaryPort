@@ -1,4 +1,24 @@
 # Appended to the fork's existing d3_credit archive reader when compiling the runtime module.
+def has_expanded_chinese_fonts(*layers):
+    """Recognize the installed translation by its font entries without reading the font data."""
+    fonts = (r"Font\ExocetLight.fnt", r"Font\SansSerif.fnt")
+    seen = set()
+    for layer in filter(None, layers):
+        for path in archive_paths(layer):
+            relative = path.relative_to(layer).as_posix().casefold()
+            if relative in seen:
+                continue
+            seen.add(relative)
+            try:
+                with d3_cpk.Archive(path) as archive:
+                    sizes = tuple(archive.entries[archive.names[name]][1] for name in fonts)
+                    if sizes == (486482552, 191604048):
+                        return True
+            except (OSError, KeyError, ValueError, IndexError, struct.error):
+                continue
+    return False
+
+
 def mount_args(layers, cache):
     """Mount a translated copy over the effective asset using the port's file-mount API."""
     import hashlib

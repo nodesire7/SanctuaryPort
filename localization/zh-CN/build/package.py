@@ -96,16 +96,18 @@ def localize_runner(data: bytes) -> bytes:
 
 
 def protect_game_start(data: bytes) -> bytes:
-    # On this 1.47 executable the upstream Auto pickup patch crashes in the guest's
-    # mutex unlock during loading. Keep the saved choice and report the skipped patch.
+    # At intermediate render heights upstream loads both font sets. This translation's
+    # expanded fonts overflow the game's font table during startup when both are loaded.
     anchor = b"    skipped={}\n    try:\n        writes=compile_patches("
     if data.count(anchor) != 1:
-        raise SystemExit("the patch compiler changed; review the Auto pickup compatibility fix")
+        raise SystemExit("the patch compiler changed; review the translated font compatibility fix")
     guard = (
         '    if sha == "680387c887625dbeaef0c46fac54a893fcb45eac428c85632acb06e6062a3176"'
-        ' and "Cheat: Auto pickup" in names:\n'
-        '        names = [name for name in names if name != "Cheat: Auto pickup"]\n'
-        '        skipped["Cheat: Auto pickup"] = "此版本启用自动拾取会导致游戏在加载时崩溃"\n'
+        ' and "Text Size - Both Font Sets" in names:\n'
+        '        import zh_credit\n'
+        '        if zh_credit.has_expanded_chinese_fonts(a.game_dir, os.environ.get("SANCTUARY_APP0_LOWER")):\n'
+        '            names = [name for name in names if name != "Text Size - Both Font Sets"]\n'
+        '            skipped["Text Size - Both Font Sets"] = "使用当前中文字体包时保留游戏原有字体加载方式"\n'
     ).encode()
     return data.replace(anchor, anchor.replace(b"    try:", guard + b"    try:"))
 
