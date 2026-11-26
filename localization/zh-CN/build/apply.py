@@ -85,6 +85,8 @@ def apply_trophies(checkout: Path) -> None:
         trophy["name"] = text["name"]
         trophy["description"] = text["description"]
         described += 1
+    if described != len(texts) or named != len(groups):
+        raise SystemExit("upstream trophy IDs changed; check the existing localization before publishing")
     write_json(target, catalogue)
     # A trophy listed upstream that we do not know yet keeps its English text: the page still
     # works, and the next translation pass fills it in.
@@ -108,53 +110,30 @@ def apply_update(checkout: Path) -> None:
         text = text.replace(anchor, anchor + "\n#[path = \"update_routes.rs\"]\nmod routes;\n",
                             1)
 
-    download_call = "download(url, &archive, expected.as_deref(), report).map_err(text)?;"
-    patched_call = ("routes::download_zip(&routes::candidates(url), &archive, "
-                    "expected.as_deref(), report).map_err(text)?;")
-    text = replace_once(text, download_call, patched_call, "the Windows download")
+    text = replace_once(text, "let expected = release_checksum(url).ok();",
+                        "let expected = release_checksum(url).map_err(text)?;",
+                        "the Windows package checksum")
+    text = replace_once(text, "download(url, &archive, expected.as_deref(), report)",
+                        "routes::download_zip(&routes::candidates(url), &archive, Some(&expected), report)",
+                        "the Windows download")
 
-    listing = '''/// One GET of the list (Accept `application/vnd.github+json`, global timeout 15 s), then `parse_releases`.
-pub fn list_releases(windows: bool) -> Result<Vec<release::Release>, UpdateError> {
-    // SANCTUARY_RELEASES_API: another list (a test server), to try an update before publishing it.
-    let api = std::env::var("SANCTUARY_RELEASES_API").unwrap_or_else(|_| RELEASES_API.to_string());
-    let (mut reader, _) = get(
-        &api,
-        Some("application/vnd.github+json"),
-        Some(Duration::from_secs(15)),
-    )?;
-    let mut text = String::new();
-    reader.read_to_string(&mut text)?;
-    let json = serde_json::from_str(&text).map_err(|e| UpdateError::Json(e.to_string()))?;
-    release::parse_releases(&json, windows)
-}'''
-    listing_patched = '''/// One GET of the list (Accept `application/vnd.github+json`, global timeout 15 s), then `parse_releases`.
-pub fn list_releases(windows: bool) -> Result<Vec<release::Release>, UpdateError> {
-    // SANCTUARY_RELEASES_API: another list (a test server), to try an update before publishing it.
-    let api = std::env::var("SANCTUARY_RELEASES_API").unwrap_or_else(|_| RELEASES_API.to_string());
-    match list_from(&api, windows) {
-        Ok(releases) => Ok(releases),
-        // The anonymous API is rate limited per address and blocked on some networks; the
-        // release page's redirect names the same tag, and the package still has to match the
-        // checksum published beside it.
-        Err(api_error) if windows && api == RELEASES_API => routes::latest_release()
-            .map(|latest| vec![latest])
-            .map_err(|web_error| UpdateError::Http(format!("{api_error} / {web_error}"))),
-        Err(error) => Err(error),
-    }
-}
-
-fn list_from(api: &str, windows: bool) -> Result<Vec<release::Release>, UpdateError> {
-    let (mut reader, _) = get(
-        api,
-        Some("application/vnd.github+json"),
-        Some(Duration::from_secs(15)),
-    )?;
-    let mut text = String::new();
-    reader.read_to_string(&mut text)?;
-    let json = serde_json::from_str(&text).map_err(|e| UpdateError::Json(e.to_string()))?;
-    release::parse_releases(&json, windows)
-}'''
-    text = replace_once(text, listing, listing_patched, "the release listing")
+    # Both the public listing and the live UI use the same upstream ETag/rate-limit cache.
+    uncached = """ReleaseCache::default().list(
+        Instant::now(),
+        |etag| fetch_list(&releases_api(), etag),
+        |text| parse_list(text, windows),
+    )"""
+    text = replace_once(text, uncached,
+                        "routes::list_with_fallback(&mut ReleaseCache::default(), windows)",
+                        "the uncached release listing")
+    cached = """cache
+            .list(
+                Instant::now(),
+                |etag| fetch_list(&releases_api(), etag),
+                |text| parse_list(text, windows),
+            )"""
+    text = replace_once(text, cached, "routes::list_with_fallback(&mut cache, windows)",
+                        "the UI release listing")
 
     source.write_text(text, encoding="utf-8")
     (checkout / ROUTES_RS).write_text((OVERLAY / "update_routes.rs").read_text(encoding="utf-8"),

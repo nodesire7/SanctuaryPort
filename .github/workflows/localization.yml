@@ -44,7 +44,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view "${{ steps.upstream.outputs.tag }}" >/dev/null 2>&1; then
+          if [[ "$(gh release view "${{ steps.upstream.outputs.tag }}" --json isDraft --jq .isDraft 2>/dev/null)" == false ]]; then
             echo "skip=yes" >> "$GITHUB_OUTPUT"
             echo "${{ steps.upstream.outputs.tag }} exists; nothing to do"
           else
@@ -109,7 +109,7 @@ jobs:
           python3 localization/zh-CN/build/package.py \
             --exe upstream/launcher-rust/target/x86_64-pc-windows-gnu/release/sanctuaryport-launcher.exe \
             --tag "$TAG" --out dist --port port.zip \
-            --dll dist/bin/SDL3.dll --sdl3 real/SDL3.dll
+            --dll dist/bin/SDL3.dll --sdl3 real/SDL3.dll --trophies upstream/assets/trophies/Diablo_III.json
           ls -l dist
       - uses: actions/upload-artifact@v4
         if: steps.published.outputs.skip == 'no'
@@ -125,7 +125,8 @@ jobs:
           TAG: ${{ steps.upstream.outputs.tag }}
           VERSION: ${{ steps.upstream.outputs.version }}
         run: |
-          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" \
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --draft --target "$GITHUB_SHA" --title "$TAG" \
             --notes "SanctuaryPort $VERSION 简体中文（汉化修订 $REVISION）"
           gh release upload "$TAG" dist/SanctuaryPort-launcher-zh-CN.zip \
               dist/SanctuaryPort-launcher-zh-CN.zip.sha256 --clobber
+          gh release edit "$TAG" --draft=false --latest

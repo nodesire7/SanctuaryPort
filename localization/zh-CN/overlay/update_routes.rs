@@ -53,11 +53,14 @@ fn probe(url: &str) -> Option<f64> {
 }
 
 fn ranked(urls: &[String]) -> Vec<&str> {
-    let mut measured: Vec<(&str, f64)> = urls
-        .iter()
-        .map(|url| (url.as_str(), probe(url)))
-        .filter_map(|(url, speed)| speed.map(|speed| (url, speed)))
-        .collect();
+    let mut measured = std::thread::scope(|scope| {
+        let probes: Vec<_> = urls.iter()
+            .map(|url| (url.as_str(), scope.spawn(move || probe(url))))
+            .collect();
+        probes.into_iter()
+            .filter_map(|(url, worker)| worker.join().ok().flatten().map(|speed| (url, speed)))
+            .collect::<Vec<_>>()
+    });
     measured.sort_by(|a, b| b.1.total_cmp(&a.1));
     let mut order: Vec<&str> = measured.into_iter().map(|(url, _)| url).collect();
     // A candidate that did not answer the probe is still worth a full attempt, last.
@@ -127,4 +130,24 @@ pub(super) fn latest_release() -> Result<release::Release, UpdateError> {
         url: format!("{DOWNLOAD}/{tag}/{ASSET}"),
         page: page.to_owned(),
     })
+}
+/// Preserve the upstream cache, including its backoff, when the public API is unavailable.
+pub(super) fn list_with_fallback(
+    cache: &mut super::ReleaseCache, windows: bool,
+) -> Result<Vec<release::Release>, UpdateError> {
+    let api = super::releases_api();
+    let now = Instant::now();
+    let result = cache.list(now, |etag| super::fetch_list(&api, etag),
+                            |text| super::parse_list(text, windows));
+    match result {
+        Err(api_error) if windows && api == super::RELEASES_API => {
+            let latest = latest_release().map_err(|_| api_error)?;
+            let list = vec![latest];
+            cache.list = Some(list.clone());
+            cache.etag = None;
+            cache.fetched = Some(now);
+            Ok(list)
+        }
+        other => other,
+    }
 }

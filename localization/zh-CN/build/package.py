@@ -40,7 +40,7 @@ def port_entries(port: Path):
 
 
 def build(exe: Path, tag: str, out: Path, dll: Path = None, sdl3: Path = None,
-          port: Path = None) -> Path:
+          port: Path = None, trophies: Path = None) -> Path:
     if (dll is None) != (sdl3 is None):
         raise SystemExit("--dll and --sdl3 go together")
     out.mkdir(parents=True, exist_ok=True)
@@ -48,6 +48,8 @@ def build(exe: Path, tag: str, out: Path, dll: Path = None, sdl3: Path = None,
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as package:
         if port is not None:
             for name, data in port_entries(port):
+                if trophies is not None and name.lower() == "assets/trophies/diablo_iii.json":
+                    data = trophies.read_bytes()
                 package.writestr(name, data)
         package.write(exe, "SanctuaryPort.exe")
         if dll is not None:
@@ -68,8 +70,9 @@ def main() -> None:
     parser.add_argument("--port", type=Path, help="the upstream port package to carry along")
     parser.add_argument("--dll", type=Path, help="the built SDL3 proxy")
     parser.add_argument("--sdl3", type=Path, help="the port's own SDL3.dll, shipped as SDL3.real.dll")
+    parser.add_argument("--trophies", type=Path, help="localized trophy catalogue from the patched checkout")
     args = parser.parse_args()
-    archive = build(args.exe, args.tag, args.out, args.dll, args.sdl3, args.port)
+    archive = build(args.exe, args.tag, args.out, args.dll, args.sdl3, args.port, args.trophies)
     print(f"{args.tag} {archive} {archive.with_suffix('.zip.sha256').read_text().split()[0]}")
 
 
