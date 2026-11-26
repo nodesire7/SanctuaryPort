@@ -202,6 +202,18 @@ def apply_branding(checkout: Path) -> None:
                             "the update-check default")
     catalog.write_text(defaults, encoding="utf-8")
 
+    # Upstream also gates the startup request and its version menu independently of the saved
+    # setting. This fork has a release feed, so honor the player's setting and expose the menu.
+    startup = checkout / "launcher-rust/src/ui/update.rs"
+    gate = '    if false && state.updater.self_update() && state.store.flag("check_updates") {'
+    startup.write_text(replace_once(startup.read_text(encoding="utf-8"), gate,
+                                    gate.replace("false && ", ""), "the startup update check"),
+                       encoding="utf-8")
+    home = checkout / "launcher-rust/src/ui/home.rs"
+    hidden = "    let version = version && false;\n"
+    home.write_text(replace_once(home.read_text(encoding="utf-8"), hidden, "",
+                                 "the home version menu"), encoding="utf-8")
+
     print(f"branding: {CREDIT_LINE} + forum link on the Advanced page, update check on by default")
 
 
