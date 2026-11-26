@@ -26,6 +26,31 @@ ARCHIVE = "SanctuaryPort-launcher-zh-CN.zip"
 OVERRIDDEN = {"sanctuaryport.exe", "bin/sdl3.dll", "bin/sdl3.real.dll", "update.json"}
 
 
+def localized_manifest(data: bytes) -> bytes:
+    """Keep upstream launch arguments and config values, applying labels by setting ID/value."""
+    manifest = json.loads(data)
+    source = Path(__file__).resolve().parents[3] / "recomplauncher.json"
+    zh = json.loads(source.read_bytes())
+    manifest["repo"] = zh["repo"]
+    manifest["game"]["label"] = zh["game"]["label"]
+    if "update" in manifest["game"]:
+        manifest["game"]["update"]["label"] = zh["game"]["update"]["label"]
+    settings = {item["id"]: item for item in zh["settings"]}
+    for item in manifest["settings"]:
+        translated = settings.get(item["id"])
+        if translated is None:
+            continue
+        for field in ("label", "help"):
+            if field in item and field in translated:
+                item[field] = translated[field]
+        labels = {json.dumps(c["set"], sort_keys=True): c["label"] for c in translated.get("choices", [])}
+        for choice in item.get("choices", []):
+            key = json.dumps(choice["set"], sort_keys=True)
+            if key in labels:
+                choice["label"] = labels[key]
+    return (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+
+
 def port_entries(port: Path):
     """Every file of the upstream package, with its top folder removed."""
     with zipfile.ZipFile(port) as source:
@@ -50,6 +75,8 @@ def build(exe: Path, tag: str, out: Path, dll: Path = None, sdl3: Path = None,
             for name, data in port_entries(port):
                 if trophies is not None and name.lower() == "assets/trophies/diablo_iii.json":
                     data = trophies.read_bytes()
+                elif name.lower() == "recomplauncher.json":
+                    data = localized_manifest(data)
                 package.writestr(name, data)
         package.write(exe, "SanctuaryPort.exe")
         if dll is not None:
