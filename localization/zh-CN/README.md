@@ -12,7 +12,7 @@ data/launcher.json     启动器界面词条（英文 → 中文），构建时�
 data/trophies.json     奖杯名与说明（按奖杯 id），构建时写进 assets/trophies/Diablo_III.json
 build/apply.py         把上面两份数据应用到一份上游检出
 build/package.py       将汉化启动器、奖杯、SDL3 和同版本上游运行文件打成更新包
-dll/                   游戏内署名的运行时替换（SDL3 代理 DLL）
+overlay/credit_mounts.py  使用移植版文件挂载接口加载游戏内署名，首次运行时在缓存中生成翻译副本
 ```
 
 启动器的界面文案和奖杯表是 `include_str!` **编译进 exe** 的，运行时没有文件可读，
@@ -25,7 +25,7 @@ dll/                   游戏内署名的运行时替换（SDL3 代理 DLL）
 | `.github/workflows/sync-upstream.yml` | 每 6 小时把 `main` 强制同步到 `CaduGimenes/SanctuaryPort` 的最新提交，并在有变化时触发汉化构建 |
 | `.github/workflows/localization.yml` | 每天/手动：取上游最新 release 标签 → 克隆该标签 → 应用汉化 → 编译启动器 → 发布 `zh-CN-v<版本>-zh<修订>` |
 
-Windows 更新包包含同版本的运行库、启动器、中文奖杯表和游戏内汉化署名组件。更新器在 GitHub 直连、GHFast 和 GH-Proxy 之间测速选线，校验成功后安装。
+Windows 更新包包含同版本的原版 SDL3、启动器、中文奖杯表和游戏内汉化署名组件。更新器在 GitHub 直连、GHFast 和 GH-Proxy 之间测速选线，校验成功后安装。
 
 ## 手动重建
 

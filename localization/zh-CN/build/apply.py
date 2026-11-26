@@ -18,6 +18,7 @@ usage: python apply.py CHECKOUT_DIR
 """
 import json
 import sys
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -60,6 +61,17 @@ def apply_launcher(checkout: Path) -> None:
     # where both have a text, so an upstream addition is never lost to this overlay.
     merged = dict(extra.get("zh", {}))
     merged.update(translations)
+    patches = ET.parse(checkout / "patches/Diablo_III.xml")
+    events = [m.get("Name")[7:] for m in patches.iter("Metadata")
+              if m.get("Name", "").startswith("Event: ")]
+    missing = [name for name in events if merged.get(name, name) == name]
+    if not events or missing:
+        raise SystemExit(f"check offline event translations against the patch list: {missing}")
+    game = checkout / "launcher-rust/src/ui/pages/game.rs"
+    game.write_text(replace_once(game.read_text(encoding="utf-8"),
+                                 "name.strip_prefix(EVENT_PREFIX).unwrap_or(&name).to_string()",
+                                 "tr(lang, name.strip_prefix(EVENT_PREFIX).unwrap_or(&name))",
+                                 "the offline event labels"), encoding="utf-8")
     extra["zh"] = merged
     write_json(target, table)
     print(f"launcher: {len(translations)} texts, {len(merged)} after merging with upstream")
